@@ -1,0 +1,17 @@
+# Never commit game-derived assets (copyrighted) or build outputs
+*.scd
+*.dds
+*.bdf
+*.bin
+*.png
+
+# Python
+__pycache__/
+*.pyc
+
+# Local working dirs
+stage*/
+base*/
+navwork/
+previews/
+archive/
