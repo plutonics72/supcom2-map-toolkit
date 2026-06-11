@@ -297,19 +297,76 @@ def component_of(mask, seed_x, seed_z):
     return comp, n
 
 def patch_costs(terrain, component):
-    """Set every cell in `component` to cost=1/island=0 on ALL layers; update island-0
-    bbox; return the rebuilt costs.win.bdf bytes. Leaves non-component cells (water,
-    cliffs) untouched so amphibious/naval layers keep their water access."""
+    """Open `component` (cost=1) on every layer, then REBUILD each layer's island grid
+    and bbox table so the navigation metadata is fully self-consistent. Returns the
+    rebuilt costs.win.bdf bytes + the patched payload.
+
+    Consistency matters for MULTIPLAYER: SC2 runs a lockstep simulation, and malformed
+    pathfinding metadata (navigable cells with stale/leftover island ids, navigable-but-
+    island-less cells, overlapping/stale bboxes) is a classic desync trigger — single-
+    player tolerates it, multiplayer diverges. _recompute_islands fixes that."""
     payload = bytearray(terrain.costs_payload)
     cells = [i for i in range(GRID*GRID) if component[i]]
-    minx = min(i % GRID for i in cells); maxx = max(i % GRID for i in cells)
-    minz = min(i // GRID for i in cells); maxz = max(i // GRID for i in cells)
     for (_lid, _cA, oA, _cB, oB, _cS, oS) in terrain.layers:
         for i in cells:
-            payload[oA + i] = 1
-            payload[oB + i] = 0
-        struct.pack_into("<4I", payload, oS, minx, minz, maxx, maxz)
+            payload[oA + i] = 1                  # open the play area on every layer
+    _recompute_islands(payload, terrain.layers)  # consistent island grid + bbox per layer
     return rebuild_bdf(terrain.raw["costs.win.bdf"], payload), payload
+
+def _recompute_islands(payload, layers):
+    """Rewrite each layer's island grid + bbox table to exactly match its cost grid:
+    island id = connected-component label of navigable (cost!=255) cells, largest = 0.
+    The bbox table can't be resized (it sits mid-payload with container fixups pointing
+    past it), so components beyond the table's capacity are blocked (cost=255) — these
+    are tiny unreachable patches. Result: cost!=255  <=>  island in 0..k-1, every island
+    contiguous with a correct bbox, no orphans. (Slower: a BFS over each layer.)"""
+    import array
+    N = GRID * GRID
+    for (_lid, _cA, oA, _cB, oB, cS, oS) in layers:
+        cap = cS // 4
+        if cap < 1:
+            continue
+        lbl = array.array('i', bytes(4 * N))     # 0 = unvisited/blocked
+        comps = []                               # [size, x0, z0, x1, z1, temp_id]
+        cid = 0
+        for s in range(N):
+            if payload[oA + s] != 255 and lbl[s] == 0:
+                cid += 1
+                q = deque([s]); lbl[s] = cid
+                size = 0; x0 = x1 = s % GRID; z0 = z1 = s // GRID
+                while q:
+                    i = q.popleft(); size += 1
+                    x = i % GRID; z = i // GRID
+                    if x < x0: x0 = x
+                    if x > x1: x1 = x
+                    if z < z0: z0 = z
+                    if z > z1: z1 = z
+                    if x > 0 and payload[oA+i-1] != 255 and lbl[i-1] == 0:
+                        lbl[i-1] = cid; q.append(i-1)
+                    if x < GRID-1 and payload[oA+i+1] != 255 and lbl[i+1] == 0:
+                        lbl[i+1] = cid; q.append(i+1)
+                    if z > 0 and payload[oA+i-GRID] != 255 and lbl[i-GRID] == 0:
+                        lbl[i-GRID] = cid; q.append(i-GRID)
+                    if z < GRID-1 and payload[oA+i+GRID] != 255 and lbl[i+GRID] == 0:
+                        lbl[i+GRID] = cid; q.append(i+GRID)
+                comps.append([size, x0, z0, x1, z1, cid])
+        comps.sort(key=lambda c: -c[0])
+        keep = {c[5]: rank for rank, c in enumerate(comps[:cap])}
+        for i in range(N):
+            if payload[oA + i] == 255:
+                payload[oB + i] = 255
+            else:
+                r = keep.get(lbl[i])
+                if r is None:                    # excess tiny component -> block (consistent)
+                    payload[oA + i] = 255; payload[oB + i] = 255
+                else:
+                    payload[oB + i] = r
+        for rank in range(cap):
+            if rank < len(comps):
+                _, x0, z0, x1, z1, _ = comps[rank]
+                struct.pack_into("<4I", payload, oS + 16*rank, x0, z0, x1, z1)
+            else:
+                struct.pack_into("<4I", payload, oS + 16*rank, 0, 0, 0, 0)
 
 def reachable(payload, layers, a, b, layer=0):
     """BFS over a costs payload: can land units walk from a to b?"""
