@@ -74,6 +74,11 @@ patch=dict(max_slope=6, water_margin=4, seed=(160,500),
            causeways=[(360, 701, 470, 561)])   # carve a ford across the water
 ```
 
+Campaign terrains carry ambient scenery props (e.g. the Illuminate desert's roaming
+"Mine Crawler"). PATCH builds neutralize moving props by default (`strip_props="moving"`)
+so your map doesn't inherit wandering vehicles; set `strip_props=False` to keep them,
+`"all"` to drop every prop, or a tuple of name substrings to target specific ones.
+
 ## What's in here
 
 | File | Purpose |

@@ -17,6 +17,8 @@ A spec is a dict:
                  dict(max_slope=6, water_margin=4, seed=(x,z),
                       causeways=[(x0,x1,z0,z1), ...])  -> PATCH the navmesh
     minimap      "donor" (copy stock) or "desert" (generated) (default "donor")
+    strip_props  PATCH only: "moving" (default — neutralize ambient moving props like
+                 campaign "Mine Crawlers"), "all", a tuple of name substrings, or False
 
 build_map loads the terrain, (optionally) patches the navmesh so the play area is
 one connected navigable island, lays out spawns + economy ONLY on navigable ground,
@@ -159,7 +161,9 @@ def build_map(spec, verbose=True, install=True):
     # ---- package + install ----
     out = os.path.join(WS, spec["out"])
     if patch:
-        sm.package_patched(out, t, sid, save_lua, scenario_lua, patched_costs, minimap_dds=mm)
+        # default: neutralize moving campaign scenery props (e.g. ambient "Mine Crawlers")
+        sm.package_patched(out, t, sid, save_lua, scenario_lua, patched_costs, minimap_dds=mm,
+                           strip_props=spec.get("strip_props", "moving"))
     else:
         sm.package_remix(out, sid, save_lua, scenario_lua, minimap_dds=mm)
     dst = sm.install(out) if install else None
@@ -182,6 +186,8 @@ SPECS = {
         patch=dict(max_slope=6, water_margin=4, seed=(160,500),
                    causeways=[(360, 701, 470, 561)]),   # ford through the central islets
         minimap="desert",
+        strip_props=False,   # keep the desert's ambient Mine Crawlers (author's choice);
+                             # omit this line (or set "moving") to neutralize them
     ),
     # REMIX example: stock skirmish terrain (already navigable), marker-only.
     "open_range_3v3": dict(

@@ -45,7 +45,7 @@ Deployment (two modes, both proven by shipped community packs + our maps):
            ship everything. Required for campaign terrains (tiny baked navmesh).
 """
 
-import os, zipfile, zlib, struct, shutil, math
+import os, re, zipfile, zlib, struct, shutil, math
 from collections import deque
 
 # ---------------------------------------------------------------------------
@@ -452,6 +452,46 @@ def write_png(path, w, h, rgb_rows):
         + chunk(b"IDAT", zlib.compress(raw, 6)) + chunk(b"IEND", b""))
 
 # ---------------------------------------------------------------------------
+# Scenery props (mapobjs.win.bdf)
+# ---------------------------------------------------------------------------
+# Animated/vehicle scenery props that move around (ambient detail in campaign maps).
+# Copying a campaign terrain wholesale brings these along — e.g. the Illuminate desert's
+# "Mine Crawler". strip_mapobjs() neutralizes them so PATCH maps don't inherit movement.
+MOVING_PROP_PATTERNS = ("Crawler", "Vehicle", "Civilian", "Wander", "Ambient_", "Traffic")
+
+def strip_mapobjs(mapobjs_bytes, mode="moving"):
+    """Return a rebuilt mapobjs.win.bdf with scenery props neutralized.
+
+    mode="moving"  — repoint every moving/vehicle prop (MOVING_PROP_PATTERNS, or a
+                     custom tuple of substrings) to a STATIC prop already present in the
+                     same file, so it stops moving. Structure-preserving (in-place,
+                     null-terminated, no offset shifts) and crash-safe (the replacement
+                     prop is one the map already loads). Static scenery (trees/rocks) kept.
+    mode="all"     — set the object count to 0 (best-effort: removes all props).
+
+    Note: verified to produce a valid file and to replace the target blueprint strings;
+    the in-game visual result (prop becomes static) is the expected behavior but is not
+    machine-verifiable here — test a build in a skirmish if it matters."""
+    payload = bytearray(read_bdf_payload(mapobjs_bytes))
+    if mode == "all":
+        struct.pack_into("<I", payload, 4, 0)                 # object count -> 0
+        return rebuild_bdf(mapobjs_bytes, payload)
+    patterns = MOVING_PROP_PATTERNS if mode == "moving" else tuple(mode)
+    is_moving = lambda p: any(pt.encode() in p for pt in patterns)
+    paths = [(m.start(), m.group()) for m in re.finditer(rb"/props/[!-~]+?\.bp", payload)]
+    static = sorted((p for _, p in paths if not is_moving(p)), key=len)
+    donor = static[0] if static else None
+    for off, path in paths:
+        if not is_moving(path):
+            continue
+        if donor and len(donor) < len(path):
+            payload[off:off+len(donor)] = donor
+            payload[off+len(donor)] = 0                       # null-terminate
+        else:
+            payload[off] = 0                                  # blank -> prop skipped
+    return rebuild_bdf(mapobjs_bytes, payload)
+
+# ---------------------------------------------------------------------------
 # Packaging + install
 # ---------------------------------------------------------------------------
 def package_remix(out_scd, scenario_id, save_lua, scenario_lua, minimap_dds=None):
@@ -460,14 +500,18 @@ def package_remix(out_scd, scenario_id, save_lua, scenario_lua, minimap_dds=None
                extra_bin={f"{scenario_id}.minimap.win.dds": minimap_dds} if minimap_dds else {})
 
 def package_patched(out_scd, terrain, terrain_id, save_lua, scenario_lua,
-                    patched_costs, minimap_dds=None, ship_lighting=True):
+                    patched_costs, minimap_dds=None, ship_lighting=True, strip_props="moving"):
     """PATCH deploy: copy the full terrain bdf set under terrain_id, swap in the
-    patched costs, ship lua. terrain_id must equal the scenario id used in scenario_lua."""
+    patched costs, ship lua. terrain_id must equal the scenario id used in scenario_lua.
+    strip_props ("moving" default / "all" / a tuple of substrings / False) neutralizes
+    campaign scenery props so the map doesn't inherit moving vehicles — see strip_mapobjs."""
     files = {}
     for k in ("hfield.win.bdf", "collision2.win.bdf", "terrain.win.bdf", "info.win.bdf",
               "mapobjs.win.bdf", "decals.win.bdf", "waterDepth.dds"):
         if terrain.raw[k]:
             files[f"{terrain_id}.{k}"] = terrain.raw[k]
+    if strip_props and terrain.raw["mapobjs.win.bdf"]:
+        files[f"{terrain_id}.mapobjs.win.bdf"] = strip_mapobjs(terrain.raw["mapobjs.win.bdf"], strip_props)
     files[f"{terrain_id}.costs.win.bdf"] = patched_costs
     files[f"{terrain_id}.minimap.win.dds"] = minimap_dds or terrain.raw["minimap.win.dds"]
     lighting = {}
