@@ -7,7 +7,9 @@ This toolkit is the result of reverse-engineering SC2's map file formats, includ
 the one nobody had cracked: the **navigation mesh**. With it you can read any shipped
 terrain, score terrains by open space, lay out a skirmish map, and — crucially —
 **patch the navmesh so units actually move** on terrain the game never enabled for
-skirmish (e.g. campaign maps). The navmesh patch is confirmed working in-game.
+skirmish (e.g. campaign maps). The navmesh patch is confirmed working in-game,
+**including multiplayer** (lockstep-safe: island metadata is rebuilt consistently;
+all players must share the byte-identical `.scd`).
 
 ![Anatomy of a generated map](layout.svg)
 
