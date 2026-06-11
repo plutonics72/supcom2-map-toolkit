@@ -9,6 +9,8 @@ terrain, score terrains by open space, lay out a skirmish map, and — crucially
 **patch the navmesh so units actually move** on terrain the game never enabled for
 skirmish (e.g. campaign maps). The navmesh patch is confirmed working in-game.
 
+![Anatomy of a generated map](layout.svg)
+
 > **You need your own legally-owned copy of Supreme Commander 2.** This tool reads the
 > game files installed on your machine; it does **not** contain or redistribute any
 > game assets. Maps you build bundle terrain data from your own install — share those
@@ -33,7 +35,10 @@ $env:SC2_GAMEDATA = "D:\SteamLibrary\steamapps\common\Supreme Commander 2\gameda
 
 ## Make your own map
 
-Open `make_map.py`, copy a spec from `SPECS`, and tweak it:
+`make_map.py` ships five worked specs you can build right now or copy from:
+`dune_rift_3v3` (PATCH: campaign desert, two shores + causeway), `open_range_3v3`,
+`four_corners_ffa`, `duel_1v1`, and `etched_desert_2v2` (all REMIX). To make your own,
+copy one in `SPECS` and tweak it:
 
 ```python
 from make_map import build_map

@@ -524,4 +524,7 @@ TERRAINS = {
                         notes="looks like Van Horne Core (shared art); big plateau"),
     "SC2_GC_DEMO": dict(name="Demo Crater",        biome="rock",   water_y=0,   openness=0.07, navmesh="degenerate", players=4,
                         notes="unreleased; cross+hub navigable, void basins blocked at runtime"),
+    "SC2_MP_007":  dict(name="4 FFA Land",         biome="grass",  water_y=0,   openness=0.67, navmesh="full",   players=4),
+    "SC2_MP_101":  dict(name="1v1 Land",           biome="grass",  water_y=0,   openness=0.09, navmesh="full",   players=2),
+    "SC2_D1_101_1K": dict(name="Etched Desert (1K)", biome="sand", water_y=0,   openness=0.43, navmesh="full",   players=4),
 }

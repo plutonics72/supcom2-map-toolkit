@@ -1,0 +1,63 @@
+<svg viewBox="0 0 720 440" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,Segoe UI,Roboto,sans-serif" role="img" aria-label="Schematic of a patched-navmesh 3v3 map: two shores split by a river, joined by a central causeway, with three spawns per side and mass points.">
+  <title>Anatomy of a generated map</title>
+  <rect x="0" y="0" width="720" height="440" rx="14" fill="#f5f3ee"/>
+  <text x="36" y="44" font-size="22" font-weight="500" fill="#33302b">Anatomy of a generated map</text>
+  <text x="36" y="68" font-size="14" fill="#7a756c">PATCH mode — two shores joined by a carved causeway, verified navigable end to end</text>
+
+  <!-- map panel -->
+  <g>
+    <rect x="36" y="92" width="338" height="320" rx="8" fill="#d9c9a3" stroke="#c7b690" stroke-width="1"/>
+    <!-- river (vertical, wavy) + NE lake -->
+    <path d="M188 92 C 210 170, 168 230, 196 300 C 214 345, 188 390, 200 412 L 232 412 C 222 380, 246 330, 222 290 C 204 235, 244 170, 220 92 Z" fill="#5a86b0"/>
+    <path d="M300 92 C 286 120, 320 140, 356 132 L 374 132 L 374 92 Z" fill="#5a86b0"/>
+    <!-- causeway -->
+    <rect x="150" y="238" width="112" height="30" rx="5" fill="#ece0c4" stroke="#cdbb94" stroke-width="1"/>
+    <text x="206" y="258" font-size="10" fill="#8a7a52" text-anchor="middle">causeway</text>
+    <!-- shore labels -->
+    <text x="96" y="110" font-size="11" fill="#7c6f4e">WEST</text>
+    <text x="316" y="110" font-size="11" fill="#7c6f4e">EAST</text>
+
+    <!-- mass clusters (green) helper drawn first so spawns sit on top -->
+    <g fill="#4a9d6a">
+      <!-- west base clusters -->
+      <circle cx="84" cy="150" r="3"/><circle cx="106" cy="150" r="3"/><circle cx="84" cy="170" r="3"/><circle cx="106" cy="170" r="3"/>
+      <circle cx="74" cy="263" r="3"/><circle cx="96" cy="263" r="3"/><circle cx="74" cy="283" r="3"/><circle cx="96" cy="283" r="3"/>
+      <circle cx="92" cy="356" r="3"/><circle cx="114" cy="356" r="3"/><circle cx="92" cy="376" r="3"/><circle cx="114" cy="376" r="3"/>
+      <!-- east base clusters -->
+      <circle cx="300" cy="170" r="3"/><circle cx="322" cy="170" r="3"/><circle cx="300" cy="190" r="3"/><circle cx="322" cy="190" r="3"/>
+      <circle cx="312" cy="258" r="3"/><circle cx="334" cy="258" r="3"/><circle cx="312" cy="278" r="3"/><circle cx="334" cy="278" r="3"/>
+      <circle cx="296" cy="352" r="3"/><circle cx="318" cy="352" r="3"/><circle cx="296" cy="372" r="3"/><circle cx="318" cy="372" r="3"/>
+      <!-- contested expansion sites -->
+      <circle cx="150" cy="160" r="3"/><circle cx="162" cy="166" r="3"/><circle cx="156" cy="172" r="3"/>
+      <circle cx="258" cy="200" r="3"/><circle cx="270" cy="206" r="3"/><circle cx="264" cy="212" r="3"/>
+      <circle cx="150" cy="330" r="3"/><circle cx="162" cy="336" r="3"/><circle cx="156" cy="342" r="3"/>
+      <circle cx="256" cy="338" r="3"/><circle cx="268" cy="344" r="3"/><circle cx="262" cy="350" r="3"/>
+      <circle cx="204" cy="190" r="3"/><circle cx="210" cy="320" r="3"/>
+    </g>
+
+    <!-- spawns -->
+    <g>
+      <rect x="78" y="144" width="13" height="13" rx="2" fill="#2f6fb0"/>
+      <rect x="68" y="257" width="13" height="13" rx="2" fill="#2f6fb0"/>
+      <rect x="86" y="350" width="13" height="13" rx="2" fill="#2f6fb0"/>
+      <rect x="306" y="164" width="13" height="13" rx="2" fill="#c0504d"/>
+      <rect x="318" y="252" width="13" height="13" rx="2" fill="#c0504d"/>
+      <rect x="300" y="346" width="13" height="13" rx="2" fill="#c0504d"/>
+    </g>
+  </g>
+
+  <!-- legend -->
+  <g font-size="13" fill="#4a463f">
+    <text x="410" y="120" font-size="14" font-weight="500" fill="#33302b">Legend</text>
+    <rect x="410" y="138" width="14" height="14" rx="2" fill="#2f6fb0"/><text x="434" y="150">Team A spawns (west)</text>
+    <rect x="410" y="166" width="14" height="14" rx="2" fill="#c0504d"/><text x="434" y="178">Team B spawns (east)</text>
+    <circle cx="417" cy="201" r="5" fill="#4a9d6a"/><text x="434" y="206">Mass points (economy)</text>
+    <rect x="410" y="222" width="14" height="14" rx="2" fill="#5a86b0"/><text x="434" y="234">Deep water (naval / air)</text>
+    <rect x="410" y="250" width="14" height="14" rx="3" fill="#ece0c4" stroke="#cdbb94"/><text x="434" y="262">Carved causeway (land crossing)</text>
+    <rect x="410" y="278" width="14" height="14" rx="2" fill="#d9c9a3" stroke="#c7b690"/><text x="434" y="290">Navigable land (patched)</text>
+
+    <text x="410" y="332" font-size="12" fill="#7a756c">Every spawn &amp; mass point is verified</text>
+    <text x="410" y="350" font-size="12" fill="#7a756c">navigable and mutually reachable</text>
+    <text x="410" y="368" font-size="12" fill="#7a756c">before the map is packaged.</text>
+  </g>
+</svg>

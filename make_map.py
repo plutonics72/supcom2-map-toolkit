@@ -36,7 +36,7 @@ def _spread(t, x, z, r=10):
     vs = [t.y(x+dx, z+dz) for dx in range(-r, r+1, 3) for dz in range(-r, r+1, 3)]
     return max(vs) - min(vs)
 
-def build_map(spec, verbose=True):
+def build_map(spec, verbose=True, install=True):
     t = sm.Terrain(spec["terrain"])
     sid = spec["scenario_id"]
     log = (lambda *a: print(*a)) if verbose else (lambda *a: None)
@@ -162,8 +162,8 @@ def build_map(spec, verbose=True):
         sm.package_patched(out, t, sid, save_lua, scenario_lua, patched_costs, minimap_dds=mm)
     else:
         sm.package_remix(out, sid, save_lua, scenario_lua, minimap_dds=mm)
-    dst = sm.install(out)
-    log(f"packaged + installed: {dst} ({os.path.getsize(out)/1e6:.1f} MB)")
+    dst = sm.install(out) if install else None
+    log(f"packaged{' + installed' if install else ''}: {dst or out} ({os.path.getsize(out)/1e6:.1f} MB)")
     return dict(scd=out, installed=dst, spawns=spawns, mass=n, sites=len(sites),
                 navigable_pct=(100*sum(comp)/(sm.GRID*sm.GRID)) if patch else None)
 
@@ -190,6 +190,33 @@ SPECS = {
         anchors={1:(622,398), 2:(653,547), 3:(475,366), 4:(401,625), 5:(370,476), 6:(548,657)},
         teams=[[1,2,3],[4,5,6]],
         economy=dict(base_mass=4, sites=9, per_site=3), norush=70,
+        patch=None,
+    ),
+    # REMIX 1v1: anchors are the stock map's own (guaranteed-navigable) start positions.
+    "duel_1v1": dict(
+        terrain="SC2_MP_101", scenario_id="SC2_MP_101D", name="[2] Duel (1v1)",
+        out="_duel_1v1.scd",
+        anchors={1:(350,554), 2:(676,554)},
+        teams=[[1],[2]],
+        economy=dict(base_mass=4, sites=4, per_site=2), norush=55,
+        patch=None,
+    ),
+    # REMIX 4-player free-for-all.
+    "four_corners_ffa": dict(
+        terrain="SC2_MP_007", scenario_id="SC2_MP_007F", name="[4] Four Corners (FFA)",
+        out="_four_corners.scd",
+        anchors={1:(524,190), 2:(506,822), 3:(826,512), 4:(200,498)},
+        teams=[[1],[2],[3],[4]],
+        economy=dict(base_mass=4, sites=6, per_site=3), norush=70,
+        patch=None,
+    ),
+    # REMIX on a DLC desert terrain (distinct biome), 2v2.
+    "etched_desert_2v2": dict(
+        terrain="SC2_D1_101_1K", scenario_id="SC2_D1_101E", name="[4] Etched Desert (2v2)",
+        out="_etched_desert_2v2.scd",
+        anchors={1:(182,416), 2:(842,608), 3:(460,174), 4:(564,850)},
+        teams=[[1,2],[3,4]],
+        economy=dict(base_mass=4, sites=8, per_site=3), norush=70,
         patch=None,
     ),
 }
