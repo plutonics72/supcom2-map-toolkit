@@ -68,30 +68,45 @@ def build_map(spec, verbose=True, install=True):
         return min(cs, key=lambda p: _dist(p, (x, z))) if cs else (round(x), round(z))
 
     # A mass extractor needs a flat, clear FOOTPRINT, not just a navigable cell — a
-    # point next to a cliff is navigable but unbuildable. buildable() requires the 5x5
-    # footprint to be navigable and the local terrain relief to be small.
-    def _relief(x, z, r=2):
+    # point near a cliff is navigable but unbuildable. Calibrated to the game's own
+    # mass deposits, which sit on very flat ground (relief <= ~0.4, max adjacent step
+    # <= ~0.2 over a 9x9 footprint). buildable() requires similar flatness and probes one
+    # cell beyond the footprint, so a cliff edge that would clip the extractor is caught.
+    def _relief(x, z, r):
         hs = [t.y(x+dx, z+dz) for dx in range(-r, r+1) for dz in range(-r, r+1)]
         return max(hs) - min(hs)
-    def buildable(x, z):
+    def _max_step(x, z, r):
+        m = 0.0
+        for dx in range(-r, r+1):
+            for dz in range(-r, r+1):
+                c = t.y(x+dx, z+dz)
+                m = max(m, abs(c - t.y(x+dx+1, z+dz)), abs(c - t.y(x+dx, z+dz+1)))
+        return m
+    def buildable(x, z, relief_max=0.5, step_max=0.25):
         x, z = round(x), round(z)
-        if not (3 < x < 1020 and 3 < z < 1020) or not t.dry(x, z):
+        if not (6 < x < 1017 and 6 < z < 1017) or not t.dry(x, z):
             return False
         if not all(nav(x+dx, z+dz) for dx in range(-2, 3) for dz in range(-2, 3)):
             return False
-        return _relief(x, z) < 2.0
+        return _relief(x, z, 4) < relief_max and _max_step(x, z, 4) < step_max
     _used = set()
-    def place(x, z, r=30):
-        """Nearest buildable, unused cell to (x,z) — keeps mass points off cliffs."""
-        x, z = round(x), round(z)
-        if (x, z) not in _used and buildable(x, z):
-            _used.add((x, z)); return (x, z)
-        cs = [(fx, fz) for fx in range(x-r, x+r+1) for fz in range(z-r, z+r+1)
-              if (fx, fz) not in _used and buildable(fx, fz)]
-        if not cs:
-            cs = [(fx, fz) for fx in range(x-r, x+r+1) for fz in range(z-r, z+r+1) if buildable(fx, fz)]
-        pick = min(cs, key=lambda p: _dist(p, (x, z))) if cs else snap(x, z)
-        _used.add(pick); return pick
+    def place(x, z):
+        """Nearest flat, buildable, unused cell to (x,z) — keeps mass points off cliffs.
+        Searches outward ring by ring (campaign-strict first, then a relaxed fallback)."""
+        ox, oz = round(x), round(z)
+        for relief_max, step_max, rmax in ((0.5, 0.25, 36), (0.9, 0.4, 56)):
+            for rad in range(0, rmax + 1, 2):
+                if rad == 0:
+                    ring = [(ox, oz)]
+                else:
+                    ring = ([(ox+dx, oz+dz) for dx in range(-rad, rad+1, 2) for dz in (-rad, rad)]
+                          + [(ox+dx, oz+dz) for dz in range(-rad+2, rad, 2) for dx in (-rad, rad)])
+                cs = [(cx, cz) for cx, cz in ring
+                      if (cx, cz) not in _used and buildable(cx, cz, relief_max, step_max)]
+                if cs:
+                    pick = min(cs, key=lambda p: _dist(p, (ox, oz)))
+                    _used.add(pick); return pick
+        fb = snap(ox, oz); _used.add(fb); return fb
 
     # ---- placeable cells (navigable, dry, flat) ----
     placeable = [(cx, cz) for cx in range(72, 953, 6) for cz in range(72, 953, 6)
