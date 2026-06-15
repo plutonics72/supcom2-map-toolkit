@@ -89,12 +89,24 @@ def build_map(spec, verbose=True, install=True):
         if not all(nav(x+dx, z+dz) for dx in range(-2, 3) for dz in range(-2, 3)):
             return False
         return _relief(x, z, 4) < relief_max and _max_step(x, z, 4) < step_max
-    _used = set()
+    _placed = []          # every reserved point (spawns + mass), for spacing
+    MIN_SEP = 12          # minimum cells between any two mass points (no overlap)
+    def _clear(x, z, sep=MIN_SEP):
+        return all(_dist((x, z), p) >= sep for p in _placed)
+    def _buffer_ok(x, z, buf=6):
+        # room around the point for defensive structures: a clear, gentle apron so the
+        # point isn't jammed against a cliff/water/map edge.
+        cells = [(x+dx, z+dz) for dx in range(-buf, buf+1, 2) for dz in range(-buf, buf+1, 2)]
+        if not all(nav(cx, cz) for cx, cz in cells):
+            return False
+        hs = [t.y(cx, cz) for cx, cz in cells]
+        return max(hs) - min(hs) < 1.6
+
     def place(x, z):
-        """Nearest flat, buildable, unused cell to (x,z) — keeps mass points off cliffs.
+        """Nearest flat, buildable cell to (x,z) that keeps MIN_SEP from other mass points.
         Searches outward ring by ring (campaign-strict first, then a relaxed fallback)."""
         ox, oz = round(x), round(z)
-        for relief_max, step_max, rmax in ((0.5, 0.25, 36), (0.9, 0.4, 56)):
+        for relief_max, step_max, rmax in ((0.5, 0.25, 40), (0.9, 0.4, 64)):
             for rad in range(0, rmax + 1, 2):
                 if rad == 0:
                     ring = [(ox, oz)]
@@ -102,17 +114,16 @@ def build_map(spec, verbose=True, install=True):
                     ring = ([(ox+dx, oz+dz) for dx in range(-rad, rad+1, 2) for dz in (-rad, rad)]
                           + [(ox+dx, oz+dz) for dz in range(-rad+2, rad, 2) for dx in (-rad, rad)])
                 cs = [(cx, cz) for cx, cz in ring
-                      if (cx, cz) not in _used and buildable(cx, cz, relief_max, step_max)]
+                      if _clear(cx, cz) and buildable(cx, cz, relief_max, step_max)]
                 if cs:
                     pick = min(cs, key=lambda p: _dist(p, (ox, oz)))
-                    _used.add(pick); return pick
-        fb = snap(ox, oz); _used.add(fb); return fb
+                    _placed.append(pick); return pick
+        fb = snap(ox, oz); _placed.append(fb); return fb
 
     def place_square(sx, sz, d0=14):
-        """Four base-mass corners that stay an AXIS-ALIGNED SQUARE and are all buildable.
-        Searches square center (near the spawn) and half-size for a placement where all
-        four corners are flat — instead of snapping corners independently (which shears
-        the square). Prefers a centered, default-size square."""
+        """Four base-mass corners that stay an AXIS-ALIGNED SQUARE, are all buildable, and
+        each have a clear apron (room for defensive structures, not jammed against a cliff).
+        Searches square center (near the spawn) and half-size for a flat placement."""
         for relief_max, step_max in ((0.5, 0.25), (0.9, 0.4)):
             for rad in range(0, 26, 2):
                 if rad == 0:
@@ -125,11 +136,11 @@ def build_map(spec, verbose=True, install=True):
                         if not (9 <= d <= 22):
                             continue
                         corners = [(cx-d, cz-d), (cx+d, cz-d), (cx-d, cz+d), (cx+d, cz+d)]
-                        if all(c not in _used and buildable(c[0], c[1], relief_max, step_max)
-                               for c in corners):
-                            _used.update(corners)
+                        if all(_clear(c[0], c[1]) and buildable(c[0], c[1], relief_max, step_max)
+                               and _buffer_ok(c[0], c[1]) for c in corners):
+                            _placed.extend(corners)
                             return corners
-        # fallback (rare — cliffy base): independent placement, may not be square
+        # fallback (rare — cliffy base): independent placement, may not be a perfect square
         return [place(sx+dx, sz+dz) for dx, dz in ((-d0,-d0),(d0,-d0),(-d0,d0),(d0,d0))]
 
     # ---- placeable cells (navigable, dry, flat) ----
@@ -140,7 +151,7 @@ def build_map(spec, verbose=True, install=True):
     # ---- spawns: snap each anchor into the navigable area ----
     spawns = {a: snap(*xz) for a, xz in spec["anchors"].items()}
     armies = sorted(spawns)
-    _used.update(spawns.values())   # reserve spawn cells so mass points avoid them
+    _placed.extend(spawns.values())   # reserve spawn cells so mass points keep clear
     if len(armies) > 1:
         log("min spawn separation: %.0f" % min(_dist(spawns[i], spawns[j])
             for i in armies for j in armies if i < j))
