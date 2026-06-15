@@ -108,6 +108,30 @@ def build_map(spec, verbose=True, install=True):
                     _used.add(pick); return pick
         fb = snap(ox, oz); _used.add(fb); return fb
 
+    def place_square(sx, sz, d0=14):
+        """Four base-mass corners that stay an AXIS-ALIGNED SQUARE and are all buildable.
+        Searches square center (near the spawn) and half-size for a placement where all
+        four corners are flat — instead of snapping corners independently (which shears
+        the square). Prefers a centered, default-size square."""
+        for relief_max, step_max in ((0.5, 0.25), (0.9, 0.4)):
+            for rad in range(0, 26, 2):
+                if rad == 0:
+                    centers = [(sx, sz)]
+                else:
+                    centers = ([(sx+ox, sz+oz) for ox in range(-rad, rad+1, 2) for oz in (-rad, rad)]
+                             + [(sx+ox, sz+oz) for oz in range(-rad+2, rad, 2) for ox in (-rad, rad)])
+                for cx, cz in centers:
+                    for d in (d0, d0+2, d0-2, d0+4, d0-4):
+                        if not (9 <= d <= 22):
+                            continue
+                        corners = [(cx-d, cz-d), (cx+d, cz-d), (cx-d, cz+d), (cx+d, cz+d)]
+                        if all(c not in _used and buildable(c[0], c[1], relief_max, step_max)
+                               for c in corners):
+                            _used.update(corners)
+                            return corners
+        # fallback (rare — cliffy base): independent placement, may not be square
+        return [place(sx+dx, sz+dz) for dx, dz in ((-d0,-d0),(d0,-d0),(-d0,d0),(d0,d0))]
+
     # ---- placeable cells (navigable, dry, flat) ----
     placeable = [(cx, cz) for cx in range(72, 953, 6) for cz in range(72, 953, 6)
                  if nav(cx, cz) and t.dry(cx, cz) and _spread(t, cx, cz) < 2.5]
@@ -124,8 +148,11 @@ def build_map(spec, verbose=True, install=True):
     # ---- base mass: clusters around each spawn ----
     eco = spec.get("economy", {})
     nbase = eco.get("base_mass", 4)
-    base_off = [(-14,-14),(14,-14),(-14,14),(14,14),(0,-18),(0,18),(-18,0),(18,0)][:nbase]
-    base_mass = {a: [place(spawns[a][0]+dx, spawns[a][1]+dz) for dx, dz in base_off] for a in armies}
+    if nbase == 4:   # keep the 4 base-mass points a clean square per spawn
+        base_mass = {a: place_square(spawns[a][0], spawns[a][1]) for a in armies}
+    else:
+        base_off = [(-14,-14),(14,-14),(-14,14),(14,14),(0,-18),(0,18),(-18,0),(18,0)][:nbase]
+        base_mass = {a: [place(spawns[a][0]+dx, spawns[a][1]+dz) for dx, dz in base_off] for a in armies}
 
     # ---- expansion sites: max-spread across navigable flats, away from spawns ----
     nsites = eco.get("sites", 10); per = eco.get("per_site", 3)
