@@ -497,6 +497,62 @@ def desert_palette(terrain):
     return pal
 
 # ---------------------------------------------------------------------------
+# Water editing — water-level field, water mask, heightfield pond carving.
+#
+# FINDING (in-game tested): you CANNOT add water to a map that was authored dry.
+# Setting the water level + writing a waterDepth.dds + carving the heightfield on a
+# dry map (e.g. Emerald Crater) renders NO water — the engine only renders water that
+# was baked in by GPG's map compiler (a water surface entity the dry map lacks). These
+# functions only affect maps that already have a baked water system; to get water,
+# build on a terrain that already has it (see TERRANS / Terrain water-layer detection).
+# Kept for reference + for tweaking already-watered maps.
+# ---------------------------------------------------------------------------
+WATER_LEVEL_OFFSET = 216   # byte offset of the water-level float32 in the info.win.bdf payload
+
+def set_water_level(info_bytes, level, offset=WATER_LEVEL_OFFSET):
+    """Return info.win.bdf rebuilt with the water-level float set to `level` (world units)."""
+    payload = bytearray(read_bdf_payload(info_bytes))
+    struct.pack_into("<f", payload, offset, float(level))
+    return rebuild_bdf(info_bytes, payload)
+
+def write_waterdepth_dds(terrain, water_level, header, is_water=None, depth_scale=40.0):
+    """Build a 512x512 DXT5 waterDepth.dds. `header` = a 128-byte DXT5 DDS header from a
+    watered donor map. A cell is water where is_water(x,z) is True (default: terrain below
+    water_level); the DXT5 ALPHA encodes depth so Terrain.dry reads it (max(a0,a1)>32) and the
+    engine renders water there. Dry blocks get alpha 0. Each 16-byte block is uniform alpha+color."""
+    if is_water is None:
+        is_water = lambda x, z: terrain.y(x, z) < water_level
+    blocks = bytearray()
+    for bj in range(128):
+        for bi in range(128):
+            tx = bi * 4 + 2; tz = bj * 4 + 2                       # block-centre texel (512 res)
+            wx = min(1024, tx * 1024 // 511); wz = min(1024, tz * 1024 // 511)
+            if is_water(wx, wz):
+                a = max(33, min(255, int((water_level - terrain.y(wx, wz)) * depth_scale) + 80))
+            else:
+                a = 0
+            blocks += bytes((a, a, 0, 0, 0, 0, 0, 0))             # DXT5 alpha: uniform a, indices 0
+            blocks += struct.pack("<HHI", 0, 0, 0)                # DXT5 colour: uniform, indices 0
+    return bytes(header[:128]) + bytes(blocks)
+
+def carve_ponds(hfield_bytes, ponds, depth_to_y):
+    """Lower the heightfield inside each pond disc to `depth_to_y` (world units), creating
+    shallow basins. ponds = [(cx, cz, radius), ...] in world cells. Returns rebuilt hfield bytes."""
+    payload = bytearray(read_bdf_payload(hfield_bytes))
+    _, w, h, _, hdat = struct.unpack_from("<5I", payload, 0)
+    target = int(depth_to_y * 128)
+    for (cx, cz, r) in ponds:
+        for dz in range(-r, r + 1):
+            for dx in range(-r, r + 1):
+                if dx * dx + dz * dz <= r * r:
+                    x, z = cx + dx, cz + dz
+                    if 0 <= x < w and 0 <= z < h:
+                        idx = hdat + (z * w + x) * 2
+                        if struct.unpack_from("<H", payload, idx)[0] > target:
+                            struct.pack_into("<H", payload, idx, target)
+    return rebuild_bdf(hfield_bytes, payload)
+
+# ---------------------------------------------------------------------------
 # PNG (debug renders) — pure stdlib
 # ---------------------------------------------------------------------------
 def write_png(path, w, h, rgb_rows):

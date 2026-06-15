@@ -44,6 +44,10 @@ def build_map(spec, verbose=True, install=True):
     log = (lambda *a: print(*a)) if verbose else (lambda *a: None)
     log(f"terrain {t.id} ({sm.TERRAINS.get(t.id,{}).get('name','?')}), {t.n_layers} layers, land layer L{t.land_layer()}")
 
+    # land layer for placement/verify; override for maps whose auto-detect is fooled
+    # (e.g. a lake map with no waterDepth.dds, where the true land-only layer must be named).
+    landL = spec.get("land_layer", t.land_layer())
+
     # ---- navigability predicate (patched component, or stock) ----
     patch = spec.get("patch")
     if patch:
@@ -57,7 +61,7 @@ def build_map(spec, verbose=True, install=True):
         nav = incomp
     else:
         comp = None
-        nav = lambda x, z: t.navok(x, z)
+        nav = lambda x, z: t.navok(x, z, layer=landL)
         incomp = nav
 
     def snap(x, z, r=20):
@@ -212,7 +216,6 @@ def build_map(spec, verbose=True, install=True):
 
     # ---- VERIFY before shipping ----
     allpts = [spawns[a] for a in armies] + [p for v in base_mass.values() for p in v] + exp_mass
-    landL = 0 if patch else t.land_layer()
     def navok(x, z):
         idx = round(z)*sm.GRID + round(x)
         if patch:
@@ -267,6 +270,25 @@ SPECS = {
                    causeways=[(360, 701, 470, 561)]),   # ford through the central islets
         minimap="desert",
         strip_props="moving",   # neutralize the desert's roaming Mine Crawlers (-> static)
+    ),
+    # REMIX 3v3: a real crater LAKE (Boras) — 6 bases ring a central water lake. The map
+    # has no waterDepth.dds, so the auto land-layer detect is fooled -> name L1 explicitly.
+    "crater_lake_3v3": dict(
+        terrain="SC2_MP_305", scenario_id="SC2_BORAS6", name="[6] Crater Lake (3v3, FFA)",
+        out="_crater_lake_3v3.scd",
+        anchors={1:(406,198), 2:(730,264), 3:(836,576), 4:(618,824), 5:(294,760), 6:(188,448)},
+        teams=[[1,2,3],[4,5,6]], land_layer=1,
+        economy=dict(base_mass=4, sites=8, per_site=2), norush=70,
+        patch=None,
+    ),
+    # REMIX 3v3: dry open green crater (Emerald Crater terrain), 6 spawns ringing the floor.
+    "emerald_crater_3v3": dict(
+        terrain="SC2_MP_007", scenario_id="SC2_EMERALD6", name="[6] Emerald Crater (3v3, FFA)",
+        out="_emerald_crater_3v3.scd",
+        anchors={1:(511,152), 2:(823,331), 3:(200,332), 4:(512,872), 5:(823,692), 6:(200,692)},
+        teams=[[1,2,3],[4,5,6]],
+        economy=dict(base_mass=4, sites=9, per_site=3), norush=70,
+        patch=None,
     ),
     # REMIX example: stock skirmish terrain (already navigable), marker-only.
     "open_range_3v3": dict(
