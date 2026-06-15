@@ -67,6 +67,32 @@ def build_map(spec, verbose=True, install=True):
               if 0 < fx < 1023 and 0 < fz < 1023 and nav(fx, fz)]
         return min(cs, key=lambda p: _dist(p, (x, z))) if cs else (round(x), round(z))
 
+    # A mass extractor needs a flat, clear FOOTPRINT, not just a navigable cell — a
+    # point next to a cliff is navigable but unbuildable. buildable() requires the 5x5
+    # footprint to be navigable and the local terrain relief to be small.
+    def _relief(x, z, r=2):
+        hs = [t.y(x+dx, z+dz) for dx in range(-r, r+1) for dz in range(-r, r+1)]
+        return max(hs) - min(hs)
+    def buildable(x, z):
+        x, z = round(x), round(z)
+        if not (3 < x < 1020 and 3 < z < 1020) or not t.dry(x, z):
+            return False
+        if not all(nav(x+dx, z+dz) for dx in range(-2, 3) for dz in range(-2, 3)):
+            return False
+        return _relief(x, z) < 2.0
+    _used = set()
+    def place(x, z, r=30):
+        """Nearest buildable, unused cell to (x,z) — keeps mass points off cliffs."""
+        x, z = round(x), round(z)
+        if (x, z) not in _used and buildable(x, z):
+            _used.add((x, z)); return (x, z)
+        cs = [(fx, fz) for fx in range(x-r, x+r+1) for fz in range(z-r, z+r+1)
+              if (fx, fz) not in _used and buildable(fx, fz)]
+        if not cs:
+            cs = [(fx, fz) for fx in range(x-r, x+r+1) for fz in range(z-r, z+r+1) if buildable(fx, fz)]
+        pick = min(cs, key=lambda p: _dist(p, (x, z))) if cs else snap(x, z)
+        _used.add(pick); return pick
+
     # ---- placeable cells (navigable, dry, flat) ----
     placeable = [(cx, cz) for cx in range(72, 953, 6) for cz in range(72, 953, 6)
                  if nav(cx, cz) and t.dry(cx, cz) and _spread(t, cx, cz) < 2.5]
@@ -75,6 +101,7 @@ def build_map(spec, verbose=True, install=True):
     # ---- spawns: snap each anchor into the navigable area ----
     spawns = {a: snap(*xz) for a, xz in spec["anchors"].items()}
     armies = sorted(spawns)
+    _used.update(spawns.values())   # reserve spawn cells so mass points avoid them
     if len(armies) > 1:
         log("min spawn separation: %.0f" % min(_dist(spawns[i], spawns[j])
             for i in armies for j in armies if i < j))
@@ -83,7 +110,7 @@ def build_map(spec, verbose=True, install=True):
     eco = spec.get("economy", {})
     nbase = eco.get("base_mass", 4)
     base_off = [(-14,-14),(14,-14),(-14,14),(14,14),(0,-18),(0,18),(-18,0),(18,0)][:nbase]
-    base_mass = {a: [snap(spawns[a][0]+dx, spawns[a][1]+dz) for dx, dz in base_off] for a in armies}
+    base_mass = {a: [place(spawns[a][0]+dx, spawns[a][1]+dz) for dx, dz in base_off] for a in armies}
 
     # ---- expansion sites: max-spread across navigable flats, away from spawns ----
     nsites = eco.get("sites", 10); per = eco.get("per_site", 3)
@@ -97,7 +124,7 @@ def build_map(spec, verbose=True, install=True):
                        + [_dist(p, spawns[a])*0.7 for a in armies]))
         sites.append(pick); cand = [p for p in cand if _dist(p, pick) > 105]
     site_off = [(0,-10),(-9,8),(9,8),(0,12),(-12,-4),(12,-4)][:per]
-    exp_mass = [snap(cx+dx, cz+dz) for (cx, cz) in sites for dx, dz in site_off]
+    exp_mass = [place(cx+dx, cz+dz) for (cx, cz) in sites for dx, dz in site_off]
 
     # ---- markers ----
     mk = []
@@ -186,8 +213,7 @@ SPECS = {
         patch=dict(max_slope=6, water_margin=4, seed=(160,500),
                    causeways=[(360, 701, 470, 561)]),   # ford through the central islets
         minimap="desert",
-        strip_props=False,   # keep the desert's ambient Mine Crawlers (author's choice);
-                             # omit this line (or set "moving") to neutralize them
+        strip_props="moving",   # neutralize the desert's roaming Mine Crawlers (-> static)
     ),
     # REMIX example: stock skirmish terrain (already navigable), marker-only.
     "open_range_3v3": dict(
