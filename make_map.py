@@ -49,6 +49,11 @@ def build_map(spec, verbose=True, install=True):
         t.set_hfield(sm.reshape_hfield(t.raw["hfield.win.bdf"], spec["sculpt"]))
         log(f"sculpted heightfield: {len(spec['sculpt'])} features")
 
+    # ---- re-skin the ground textures (changes the LOOK; elevation/nav untouched) ----
+    if spec.get("reskin"):
+        t.raw["terrain.win.bdf"] = sm.reskin_terrain(t.raw["terrain.win.bdf"], spec["reskin"])
+        log(f"re-skinned {len(spec['reskin'])//2} ground layers")
+
     # land layer for placement/verify; override for maps whose auto-detect is fooled
     # (e.g. a lake map with no waterDepth.dds, where the true land-only layer must be named).
     landL = spec.get("land_layer", t.land_layer())
@@ -243,8 +248,10 @@ def build_map(spec, verbose=True, install=True):
 
     # ---- minimap ----
     mm = None
-    if spec.get("minimap") == "desert":
-        mm = sm.write_minimap_dds(t, sm.desert_palette(t))
+    _pal = {"desert": sm.desert_palette, "snow": getattr(sm, "snow_palette", None),
+            "dark": getattr(sm, "dark_palette", None)}.get(spec.get("minimap"))
+    if _pal:
+        mm = sm.write_minimap_dds(t, _pal(t))
 
     # ---- package + install ----
     out = os.path.join(WS, spec["out"])
@@ -362,6 +369,57 @@ SPECS = {
         ),
         patch=dict(max_slope=6, water_margin=0, seed=(512, 512)),
         economy=dict(base_mass=4, sites=9, per_site=3), norush=70,
+    ),
+    # SCULPTED on a DIFFERENT base terrain — orange-red Martian desert (MP_202) — for a genuinely
+    # NEW look (different palette/rim from green Emerald Crater). Bases sit on the flat desert floor
+    # (y49) so the mass pads never straddle a step (no float); the drama is a 4-tier central citadel
+    # plateau ringed by six terraced cover mesas, all raised out of the floor.
+    "scorched_mesa_3v3": dict(
+        terrain="SC2_MP_202", scenario_id="SC2_SCORCH6", name="[6] Scorched Mesa (3v3, FFA)",
+        out="_scorched_mesa_3v3.scd",
+        anchors={1:(505,190), 2:(736,306), 3:(844,598), 4:(505,822), 5:(204,639), 6:(194,387)},
+        teams=[[1,2,3],[4,5,6]],
+        sculpt=(
+            sm.plateau(505, 506, 84, 88, floor_y=49, ramps=['+x','-x','+z','-z'],
+                       ramp_w=34, ramp_len=56, tiers=4, tier_w=12, tier_drop=10)        # central citadel
+            + sm.plateau(405, 333, 30, 74, floor_y=49, tiers=2, tier_w=10, tier_drop=12)  # six terraced cover mesas
+            + sm.plateau(305, 506, 30, 74, floor_y=49, tiers=2, tier_w=10, tier_drop=12)
+            + sm.plateau(405, 679, 30, 74, floor_y=49, tiers=2, tier_w=10, tier_drop=12)
+            + sm.plateau(605, 679, 30, 74, floor_y=49, tiers=2, tier_w=10, tier_drop=12)
+            + sm.plateau(705, 506, 30, 74, floor_y=49, tiers=2, tier_w=10, tier_drop=12)
+            + sm.plateau(605, 333, 30, 74, floor_y=49, tiers=2, tier_w=10, tier_drop=12)
+        ),
+        patch=dict(max_slope=6, water_margin=0, seed=(505, 300)),
+        economy=dict(base_mass=4, sites=9, per_site=3), norush=70,
+    ),
+    # RE-SKINNED open map: keep Emerald Crater's OPEN BOWL shape but repaint the ground to a dark
+    # natural-rock biome (MP_301) for a genuinely new ashen/scorched LOOK — proving the texture
+    # re-skin (reskin_terrain). No sculpt (stays open), props stripped barren.
+    "ashen_basin_3v3": dict(
+        terrain="SC2_MP_007", scenario_id="SC2_ASHEN6", name="[6] Ashen Basin (3v3, FFA)",
+        out="_ashen_basin_3v3.scd",
+        anchors={1:(511,152), 2:(823,331), 3:(200,332), 4:(512,872), 5:(823,692), 6:(200,692)},
+        teams=[[1,2,3],[4,5,6]],
+        reskin=sm.reskin_map("MP_007", "MP_301", "sc2_mp_007_", "sc2_mp_301_",
+            [("grass01","ground01"), ("ground01","ground02"), ("rock01","hill01"),
+             ("rock02","crystal"), ("sand01","ground02"), ("benthal01","ground01")]),
+        patch=dict(max_slope=6, water_margin=0, seed=(512, 512)),
+        economy=dict(base_mass=4, sites=9, per_site=3), norush=70,
+        strip_props="all", minimap="dark",
+    ),
+    # RE-SKINNED open map #2: the same open bowl repainted to SNOW (MP_305 snow/floor/hill) for a
+    # white ice-field look. No sculpt (open), props stripped.
+    "frost_crater_3v3": dict(
+        terrain="SC2_MP_007", scenario_id="SC2_FROST6", name="[6] Frost Crater (3v3, FFA)",
+        out="_frost_crater_3v3.scd",
+        anchors={1:(511,152), 2:(823,331), 3:(200,332), 4:(512,872), 5:(823,692), 6:(200,692)},
+        teams=[[1,2,3],[4,5,6]],
+        reskin=sm.reskin_map("MP_007", "MP_305", "sc2_mp_007_", "sc2_mp_305_",
+            [("grass01","snow01"), ("ground01","floor01"), ("rock01","hill"),
+             ("rock02","floor02"), ("sand01","snow01"), ("benthal01","floor03")]),
+        patch=dict(max_slope=6, water_margin=0, seed=(512, 512)),
+        economy=dict(base_mass=4, sites=9, per_site=3), norush=70,
+        strip_props="all", minimap="snow",
     ),
     # REMIX 3v3: dry open green crater (Emerald Crater terrain), 6 spawns ringing the floor.
     "emerald_crater_3v3": dict(

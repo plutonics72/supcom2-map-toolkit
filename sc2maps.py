@@ -504,6 +504,24 @@ def desert_palette(terrain):
         return (168, 138, 96)
     return pal
 
+def snow_palette(terrain):
+    """White/ice minimap to match a snow re-skin (colours by height: floor->rim)."""
+    def pal(x, z):
+        v = terrain.y(x, z)
+        if v < 30: return (210, 220, 230)
+        if v < 90: return (188, 200, 214)
+        return (150, 164, 182)
+    return pal
+
+def dark_palette(terrain):
+    """Dark-grey minimap to match a scorched-rock / dark re-skin."""
+    def pal(x, z):
+        v = terrain.y(x, z)
+        if v < 30: return (66, 68, 72)
+        if v < 90: return (54, 56, 60)
+        return (40, 42, 46)
+    return pal
+
 # ---------------------------------------------------------------------------
 # Water editing — water-level field, water mask, heightfield pond carving.
 #
@@ -653,6 +671,52 @@ def plateau(cx, cz, r, top_y, floor_y=8.0, ramps=(), ramp_w=28, ramp_len=48,
         elif d == "-z":
             ops.append(("ramp", cx - hw, cz - r - ramp_len, cx + hw, cz - rt + ov, floor_y, top_y, "set"))
     return ops
+
+# ---------------------------------------------------------------------------
+# Re-skin — change a map's GROUND TEXTURES (its look) without touching elevation
+# ---------------------------------------------------------------------------
+def reskin_terrain(terrain_bytes, mapping):
+    """Re-skin the ground by repointing texture paths inside terrain.win.bdf to a DIFFERENT
+    biome's textures — changes the actual visible look (grass->snow/rock/etc.), PROVEN in-game.
+
+    mapping = {old_full_path: new_full_path}. Paths are written WITHOUT the '.win' infix (the
+    engine inserts it: a map references '..._grass01_d.dds' but the file is '..._grass01_d.win.dds').
+    Editing is IN PLACE — each path is overwritten within its own byte span (path + trailing nulls)
+    and null-padded back to the same length — so NO internal offsets in the BDF shift. The new
+    path must therefore be strictly shorter than the old path's slot (raises otherwise). Returns
+    rebuilt terrain.win.bdf bytes. Pair with package_patched (which ships the modified terrain)."""
+    pl = bytearray(read_bdf_payload(terrain_bytes))
+    done = 0
+    for m in list(re.finditer(rb"/[Tt]extures/Terrain/[!-~]+?\.dds", pl)):
+        old = m.group().decode("latin1")
+        if old not in mapping:
+            continue
+        s, e = m.start(), m.end()
+        slack = 0
+        while e + slack < len(pl) and pl[e + slack] == 0:
+            slack += 1
+        slot = (e - s) + slack
+        new = mapping[old].encode("latin1")
+        if len(new) >= slot:
+            raise ValueError(f"reskin path too long for slot ({len(new)}>={slot}): {mapping[old]}")
+        pl[s:s + slot] = new + b"\x00" * (slot - len(new))
+        done += 1
+    if done == 0:
+        raise ValueError("reskin_terrain: no texture paths matched the mapping keys")
+    return rebuild_bdf(terrain_bytes, pl)
+
+
+def reskin_map(src_id, dst_id, src_prefix, dst_prefix, layers):
+    """Convenience: build a reskin_terrain mapping for the diffuse(_d)+normal(_n) of each layer.
+    layers = [(src_layer, dst_layer), ...]. Paths look like
+      /textures/Terrain/<id>/<prefix><layer>_<d|n>.dds   (no '.win')
+    e.g. reskin_map('MP_007','MP_301','sc2_mp_007_','sc2_mp_301_',[('grass01','ground01'),...])."""
+    m = {}
+    for sl, dl in layers:
+        for ch in ("d", "n"):
+            m[f"/textures/Terrain/{src_id}/{src_prefix}{sl}_{ch}.dds"] = \
+                f"/textures/Terrain/{dst_id}/{dst_prefix}{dl}_{ch}.dds"
+    return m
 
 # ---------------------------------------------------------------------------
 # PNG (debug renders) — pure stdlib
