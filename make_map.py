@@ -283,6 +283,19 @@ SPECS = {
         minimap="desert",
         strip_props="moving",   # neutralize the desert's roaming Mine Crawlers (-> static)
     ),
+    # 2v2 version of Dune Rift — 4 spawns (two west shore vs two east shore) across the central
+    # causeway. Same terrain/patch as the 3v3; fewer spawns + expansions.
+    "dune_rift_2v2": dict(
+        terrain="SC2_CA_I01", scenario_id="SC2_DUNE4", name="[4] Dune Rift (2v2)",
+        out="_dune_rift_2v2.scd",
+        anchors={1:(150,230), 2:(170,815), 3:(864,400), 4:(820,840)},
+        teams=[[1,2],[3,4]],
+        economy=dict(base_mass=4, sites=8, per_site=3), norush=70,
+        patch=dict(max_slope=6, water_margin=4, seed=(160,500),
+                   causeways=[(360, 701, 470, 561)]),
+        minimap="desert",
+        strip_props="moving",
+    ),
     # REMIX 3v3: a real crater LAKE (Boras) — 6 bases ring a central water lake. The map
     # has no waterDepth.dds, so the auto land-layer detect is fooled -> name L1 explicitly.
     "crater_lake_3v3": dict(
