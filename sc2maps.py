@@ -168,6 +168,14 @@ class Terrain:
         self.layers = [struct.unpack_from("<7I", self.costs_payload, toff + 28*i)
                        for i in range(self.n_layers)]
 
+    def set_hfield(self, hfield_bytes):
+        """Swap in a (sculpted) heightfield and re-parse heights, so all queries +
+        nav/placement use the NEW terrain. Pair with reshape_hfield()."""
+        self.raw["hfield.win.bdf"] = hfield_bytes
+        hp = read_bdf_payload(hfield_bytes)
+        _, self.HW, self.HH, _, hdat = struct.unpack_from("<5I", hp, 0)
+        self.H = struct.unpack_from(f"<{self.HW*self.HH}H", hp, hdat)
+
     # --- height / water queries (world coords) ---
     def y(self, x, z):
         return self.H[round(z) * self.HW + round(x)] / 128.0
@@ -551,6 +559,100 @@ def carve_ponds(hfield_bytes, ponds, depth_to_y):
                         if struct.unpack_from("<H", payload, idx)[0] > target:
                             struct.pack_into("<H", payload, idx, target)
     return rebuild_bdf(hfield_bytes, payload)
+
+def reshape_hfield(hfield_bytes, ops):
+    """Sculpt the heightfield (PROVEN to change the visible terrain in-game). `ops` is a list:
+      ("disc", cx, cz, r, y, mode)              flat disc of radius r set to height y
+      ("cone", cx, cz, r, peak_y, mode)         smooth cone: peak_y at centre, easing to edge
+      ("rect", x0, z0, x1, z1, y, mode)         flat rectangle
+      ("ramp", x0, z0, x1, z1, y_lo, y_hi, mode) graded slab: height interpolates linearly along
+                                                the longer axis from y_lo (low-coord end) to y_hi
+                                                (high-coord end). A gentle ramp (small dy / long
+                                                run) stays WALKABLE; use it to connect a steep
+                                                plateau top down to the floor.
+    mode: "set" overwrite | "raise" only where it lifts terrain | "lower" only where it drops it.
+    Flat-topped discs/rects get steep (blocked) walls = obstacles; broad cones + ramps are gentle
+    (walkable) highground/access. Returns rebuilt hfield.win.bdf bytes (pair with set_hfield)."""
+    payload = bytearray(read_bdf_payload(hfield_bytes))
+    _, w, h, _, hd = struct.unpack_from("<5I", payload, 0)
+    def get(x, z): return struct.unpack_from("<H", payload, hd+(z*w+x)*2)[0]
+    def put(x, z, y, mode):
+        if not (0 <= x < w and 0 <= z < h): return
+        raw = max(0, min(65535, int(y*128))); cur = get(x, z)
+        if mode == "raise" and raw <= cur: return
+        if mode == "lower" and raw >= cur: return
+        struct.pack_into("<H", payload, hd+(z*w+x)*2, raw)
+    for op in ops:
+        k = op[0]
+        if k == "disc":
+            _, cx, cz, r, y, mode = op
+            for dz in range(-r, r+1):
+                for dx in range(-r, r+1):
+                    if dx*dx + dz*dz <= r*r: put(cx+dx, cz+dz, y, mode)
+        elif k == "cone":
+            _, cx, cz, r, peak, mode = op
+            for dz in range(-r, r+1):
+                for dx in range(-r, r+1):
+                    d = (dx*dx + dz*dz) ** 0.5
+                    if d <= r:
+                        base = get(cx+dx, cz+dz) / 128.0
+                        put(cx+dx, cz+dz, base + (peak-base)*(1 - d/r), mode)
+        elif k == "rect":
+            _, x0, z0, x1, z1, y, mode = op
+            for z in range(max(0, z0), min(h, z1)):
+                for x in range(max(0, x0), min(w, x1)):
+                    put(x, z, y, mode)
+        elif k == "ramp":
+            _, x0, z0, x1, z1, y_lo, y_hi, mode = op
+            ax0, ax1 = min(x0, x1), max(x0, x1)
+            az0, az1 = min(z0, z1), max(z0, z1)
+            along_x = (ax1 - ax0) >= (az1 - az0)
+            lo_c = ax0 if along_x else az0
+            span = max(1, (ax1 - ax0 if along_x else az1 - az0) - 1)
+            for z in range(max(0, az0), min(h, az1)):
+                for x in range(max(0, ax0), min(w, ax1)):
+                    t = ((x if along_x else z) - lo_c) / span
+                    put(x, z, y_lo + (y_hi - y_lo) * max(0.0, min(1.0, t)), mode)
+    return rebuild_bdf(hfield_bytes, payload)
+
+
+def plateau(cx, cz, r, top_y, floor_y=8.0, ramps=(), ramp_w=28, ramp_len=48,
+            shape="disc", mode="raise", tiers=1, tier_w=10, tier_drop=12.0):
+    """Return a list of reshape_hfield ops for a flat-topped plateau (STEEP, unit-blocking
+    walls) at height `top_y`, with gentle WALKABLE ramps descending to `floor_y` on the named
+    sides. `ramps` is any of '+x','-x','+z','-z' (the compass direction the ramp descends).
+    Pair with a navmesh patch whose component seed sits on the floor: component_of then floods
+    floor -> up each ramp -> plateau top, so a base placed on top stays reachable.
+
+    tiers>1 builds a STEPPED / TERRACED plateau: `tiers` concentric rings, the flat top at
+    radius `r-(tiers-1)*tier_w` and height top_y, each outer ring `tier_w` wider and `tier_drop`
+    lower. Every step is a fresh steep face, and SC2 auto-textures steep faces tan/rock — so a
+    terraced plateau shows several concentric tan rings even from the flattened overhead camera
+    (the zoomed-out view that hides gentle relief). The ramp runs the full top_y->floor_y drop,
+    starting at the inner flat-top edge, carving one gentle walkable notch through every tier."""
+    rt = max(2, r - (tiers - 1) * tier_w)        # inner flat-top radius
+    ops = []
+    for i in range(tiers):                       # outermost(low) first, inner(high) overwrites
+        ri = r - i * tier_w
+        yi = top_y - (tiers - 1 - i) * tier_drop
+        if ri <= 0:
+            continue
+        if shape == "rect":
+            ops.append(("rect", cx - ri, cz - ri, cx + ri, cz + ri, yi, mode))
+        else:
+            ops.append(("disc", cx, cz, ri, yi, mode))
+    hw = ramp_w // 2
+    ov = 8  # overlap into the flat top so the ramp fuses with it (no lip)
+    for d in ramps:
+        if d == "+x":
+            ops.append(("ramp", cx + rt - ov, cz - hw, cx + r + ramp_len, cz + hw, top_y, floor_y, "set"))
+        elif d == "-x":
+            ops.append(("ramp", cx - r - ramp_len, cz - hw, cx - rt + ov, cz + hw, floor_y, top_y, "set"))
+        elif d == "+z":
+            ops.append(("ramp", cx - hw, cz + rt - ov, cx + hw, cz + r + ramp_len, top_y, floor_y, "set"))
+        elif d == "-z":
+            ops.append(("ramp", cx - hw, cz - r - ramp_len, cx + hw, cz - rt + ov, floor_y, top_y, "set"))
+    return ops
 
 # ---------------------------------------------------------------------------
 # PNG (debug renders) — pure stdlib

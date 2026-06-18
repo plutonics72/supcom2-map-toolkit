@@ -44,6 +44,11 @@ def build_map(spec, verbose=True, install=True):
     log = (lambda *a: print(*a)) if verbose else (lambda *a: None)
     log(f"terrain {t.id} ({sm.TERRAINS.get(t.id,{}).get('name','?')}), {t.n_layers} layers, land layer L{t.land_layer()}")
 
+    # ---- sculpt the heightfield first (so nav + placement use the NEW terrain) ----
+    if spec.get("sculpt"):
+        t.set_hfield(sm.reshape_hfield(t.raw["hfield.win.bdf"], spec["sculpt"]))
+        log(f"sculpted heightfield: {len(spec['sculpt'])} features")
+
     # land layer for placement/verify; override for maps whose auto-detect is fooled
     # (e.g. a lake map with no waterDepth.dds, where the true land-only layer must be named).
     landL = spec.get("land_layer", t.land_layer())
@@ -280,6 +285,83 @@ SPECS = {
         teams=[[1,2,3],[4,5,6]], land_layer=1,
         economy=dict(base_mass=4, sites=8, per_site=2), norush=70,
         patch=None,
+    ),
+    # SCULPTED 3v3: reshape Emerald Crater's flat floor into a NEW battlefield — a central
+    # walkable dome (high ground) ringed by six cover mesas, six bases between them. Genuinely
+    # new-looking (sculpted, not a reskin); green; dry (water can't go on a green map).
+    "emerald_hollow_3v3": dict(
+        terrain="SC2_MP_007", scenario_id="SC2_HOLLOW6", name="[6] Emerald Hollow (3v3, FFA)",
+        out="_emerald_hollow_3v3.scd",
+        anchors={1:(512,152), 2:(824,332), 3:(200,332), 4:(824,692), 5:(512,872), 6:(200,692)},
+        teams=[[1,2,3],[4,5,6]],
+        sculpt=[("cone", 512, 512, 125, 60, "raise"),     # tall central MOUNTAIN (walkable high ground)
+                ("disc", 762, 512, 42, 46, "raise"),       # six tall flat-top MESAS (sharp obstacles)
+                ("disc", 637, 296, 42, 46, "raise"),
+                ("disc", 387, 296, 42, 46, "raise"),
+                ("disc", 262, 512, 42, 46, "raise"),
+                ("disc", 387, 728, 42, 46, "raise"),
+                ("disc", 637, 728, 42, 46, "raise"),
+                ("rect", 486, 230, 538, 300, 38, "raise"), # short tall ridges flanking the centre
+                ("rect", 486, 724, 538, 794, 38, "raise")],
+        patch=dict(max_slope=6, water_margin=0, seed=(512, 512)),
+        economy=dict(base_mass=4, sites=9, per_site=3), norush=70,
+    ),
+    # ---- "steep plateaus + ramps + carved valley lanes" variants (green, dry, MP_007) ----
+    # Built with sm.plateau(): flat-topped, steep-walled highground + gentle WALKABLE ramps.
+    # All seed the nav patch on the floor so every plateau stays reachable up its ramp(s).
+    #
+    # V1 "Citadel": bases on the floor; a dramatic two-tier central plateau (4 ramps) to fight
+    # over, ringed by six steep mesas that pinch the open floor into radial valley lanes.
+    "citadel_3v3": dict(
+        terrain="SC2_MP_007", scenario_id="SC2_CITADEL6", name="[6] Citadel (3v3, FFA)",
+        out="_citadel_3v3.scd",
+        anchors={1:(512,160), 2:(820,336), 3:(204,336), 4:(820,688), 5:(512,864), 6:(204,688)},
+        teams=[[1,2,3],[4,5,6]],
+        sculpt=(
+            sm.plateau(512, 512, 84, 56, floor_y=10, ramps=['+x','-x','+z','-z'],
+                       ramp_w=34, ramp_len=54, tiers=4, tier_w=11, tier_drop=11)   # 4-tier central citadel
+            + sm.plateau(660, 226, 28, 36, floor_y=10, tiers=2, tier_w=9, tier_drop=13)  # 6 terraced ring mesas
+            + sm.plateau(364, 226, 28, 36, floor_y=10, tiers=2, tier_w=9, tier_drop=13)
+            + sm.plateau(864, 512, 28, 36, floor_y=10, tiers=2, tier_w=9, tier_drop=13)
+            + sm.plateau(160, 512, 28, 36, floor_y=10, tiers=2, tier_w=9, tier_drop=13)
+            + sm.plateau(660, 798, 28, 36, floor_y=10, tiers=2, tier_w=9, tier_drop=13)
+            + sm.plateau(364, 798, 28, 36, floor_y=10, tiers=2, tier_w=9, tier_drop=13)
+        ),
+        patch=dict(max_slope=6, water_margin=0, seed=(512, 300)),
+        economy=dict(base_mass=4, sites=9, per_site=3), norush=70,
+    ),
+    # V2 "Highlands": every base sits on its OWN steep plateau with a ramp down into a big central
+    # arena (the carved valley floor) — holding the ramps and the low ground is the whole game.
+    "highlands_3v3": dict(
+        terrain="SC2_MP_007", scenario_id="SC2_HIGHLAND6", name="[6] Highlands (3v3, FFA)",
+        out="_highlands_3v3.scd",
+        anchors={1:(512,170), 2:(816,340), 3:(208,340), 4:(816,684), 5:(512,854), 6:(208,684)},
+        teams=[[1,2,3],[4,5,6]],
+        sculpt=(
+            sm.plateau(512, 170, 50, 44, floor_y=8, ramps=['+z'], ramp_w=32, ramp_len=46, tiers=3, tier_w=8, tier_drop=11)
+            + sm.plateau(816, 340, 50, 44, floor_y=8, ramps=['-x'], ramp_w=32, ramp_len=46, tiers=3, tier_w=8, tier_drop=11)
+            + sm.plateau(208, 340, 50, 44, floor_y=8, ramps=['+x'], ramp_w=32, ramp_len=46, tiers=3, tier_w=8, tier_drop=11)
+            + sm.plateau(816, 684, 50, 44, floor_y=8, ramps=['-x'], ramp_w=32, ramp_len=46, tiers=3, tier_w=8, tier_drop=11)
+            + sm.plateau(512, 854, 50, 44, floor_y=8, ramps=['-z'], ramp_w=32, ramp_len=46, tiers=3, tier_w=8, tier_drop=11)
+            + sm.plateau(208, 684, 50, 44, floor_y=8, ramps=['+x'], ramp_w=32, ramp_len=46, tiers=3, tier_w=8, tier_drop=11)
+            + [("cone", 512, 512, 72, 22, "raise")]   # gentle central rise (walkable; keeps arena one island)
+        ),
+        patch=dict(max_slope=6, water_margin=0, seed=(512, 512)),
+        economy=dict(base_mass=4, sites=9, per_site=3), norush=70,
+    ),
+    # V3 "Rift": two large steep plateaus (NE + SW) with ramps, split by a diagonal central valley
+    # rift; the six bases ring the floor. The plateaus are positioned to never cover a spawn.
+    "rift_3v3": dict(
+        terrain="SC2_MP_007", scenario_id="SC2_RIFT6", name="[6] Rift (3v3, FFA)",
+        out="_rift_3v3.scd",
+        anchors={1:(512,160), 2:(824,336), 3:(204,336), 4:(824,688), 5:(512,864), 6:(204,688)},
+        teams=[[1,2,3],[4,5,6]],
+        sculpt=(
+            sm.plateau(672, 300, 108, 42, floor_y=10, ramps=['-x','+z'], ramp_w=36, ramp_len=54, tiers=3, tier_w=14, tier_drop=11)
+            + sm.plateau(352, 724, 108, 42, floor_y=10, ramps=['+x','-z'], ramp_w=36, ramp_len=54, tiers=3, tier_w=14, tier_drop=11)
+        ),
+        patch=dict(max_slope=6, water_margin=0, seed=(512, 512)),
+        economy=dict(base_mass=4, sites=9, per_site=3), norush=70,
     ),
     # REMIX 3v3: dry open green crater (Emerald Crater terrain), 6 spawns ringing the floor.
     "emerald_crater_3v3": dict(
