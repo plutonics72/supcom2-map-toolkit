@@ -831,6 +831,59 @@ def flatten_gentle(hfield_bytes, terrain, keep_slope=6.0, radius=7, passes=2, wa
         struct.pack_into("<H", pl, hd + i * 2, H[i])
     return rebuild_bdf(hfield_bytes, pl)
 
+
+def ruggedize_edges(hfield_bytes, terrain, margin=40, rise=24.0, amp=14.0,
+                    water_margin=4.0, seed=1234, taper=5.0):
+    """Turn the outer `margin` cells around the map into a BOLD, impassable rocky rim: a raised
+    rocky band (base lift `rise`) broken up by coarse multi-octave boulder/mound relief (amplitude
+    `amp`), with a clean steep INNER FACE -- the boulder relief tapers to zero over the innermost
+    `taper` cells, so the band always steps up >threshold from the interior. That gives a CONTINUOUS
+    non-navigable boundary (the flood can't cross the inner face, so the whole band is excluded).
+    VISIBILITY CAVEAT: this only RENDERS as a rim on SKIRMISH (MP_*) terrains, which draw from the
+    live heightfield. On CAMPAIGN (CA_*) terrains the visible surface is a BAKED mesh, so the band
+    is an INVISIBLE, gameplay-only wall -- units stop at it but nothing is drawn (verified in-game
+    on Dune Rift / CA_I01); use texture re-skin for a visible edge there. Dry land only -- water
+    cells (e.g. a rift shore) are left intact. Apply AFTER leveling and BEFORE the nav patch so
+    dry_gentle_mask sees the band as non-gentle. Returns rebuilt hfield."""
+    pl = bytearray(read_bdf_payload(hfield_bytes))
+    _, w, h, _, hd = struct.unpack_from("<5I", pl, 0)
+    n = w * h
+    H = list(struct.unpack_from(f"<{n}H", pl, hd))
+    orig = H[:]
+    waterraw = int((_water_level(terrain) + water_margin) * 128)
+    riseraw = int(rise * 128)
+    ampraw = amp * 128
+    def h01(a, b, s):
+        v = ((a * 73856093) ^ (b * 19349663) ^ (seed + s)) & 0xFFFFFFFF
+        v = (v * 2654435761) & 0xFFFFFFFF
+        return ((v >> 8) & 0xFFFF) / 65535.0
+    def vnoise(x, z, scale, s):                               # smooth value noise -> rounded mounds
+        gx = x / scale; gz = z / scale
+        ix = int(gx); iz = int(gz); fx = gx - ix; fz = gz - iz
+        fx = fx * fx * (3.0 - 2.0 * fx); fz = fz * fz * (3.0 - 2.0 * fz)
+        a = h01(ix, iz, s); b = h01(ix + 1, iz, s)
+        cc = h01(ix, iz + 1, s); dd = h01(ix + 1, iz + 1, s)
+        top = a + (b - a) * fx; bot = cc + (dd - cc) * fx
+        return (top + (bot - top) * fz - 0.5) * 2.0           # -1..1, smooth
+    for z in range(h):
+        for x in range(w):
+            d = min(x, w - 1 - x, z, h - 1 - z)               # distance from map edge
+            if d > margin:                                    # straight inner boundary (no leaks)
+                continue
+            c = orig[z * w + x]
+            if c < waterraw:                                  # leave the water rift
+                continue
+            mounds = vnoise(x, z, 16.0, 2)                    # rounded ~16-cell mounds
+            bumps = vnoise(x, z, 6.0, 3)                      # ~6-cell boulders
+            wb = (margin - d) / taper                         # 0 at inner edge -> clean steep face
+            if wb > 1.0:
+                wb = 1.0
+            v = c + riseraw + int((mounds + 0.6 * bumps) * ampraw * wb)
+            H[z * w + x] = 0 if v < 0 else (65535 if v > 65535 else v)
+    for i in range(n):
+        struct.pack_into("<H", pl, hd + i * 2, H[i])
+    return rebuild_bdf(hfield_bytes, pl)
+
 # ---------------------------------------------------------------------------
 # PNG (debug renders) — pure stdlib
 # ---------------------------------------------------------------------------

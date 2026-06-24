@@ -64,6 +64,11 @@ def build_map(spec, verbose=True, install=True):
         t.set_hfield(sm.flatten_gentle(t.raw["hfield.win.bdf"], t, **spec["smooth"]))
         log("smoothed gentle terrain for buildability (cliffs/water preserved)")
 
+    # ---- ruggedize the map-edge band into an impassable, visibly-rocky boundary ----
+    if spec.get("rugged_edges"):
+        t.set_hfield(sm.ruggedize_edges(t.raw["hfield.win.bdf"], t, **spec["rugged_edges"]))
+        log("ruggedized map-edge band (impassable rocky boundary)")
+
     # land layer for placement/verify; override for maps whose auto-detect is fooled
     # (e.g. a lake map with no waterDepth.dds, where the true land-only layer must be named).
     landL = spec.get("land_layer", t.land_layer())
@@ -231,6 +236,10 @@ def build_map(spec, verbose=True, install=True):
     # ---- patch the navmesh now that we know the component ----
     if patch:
         patched_costs, payload = sm.patch_costs(t, comp)
+    elif spec.get("ship_terrain"):
+        # ship the (modified, e.g. reskinned) terrain under the new id but KEEP the original
+        # navmesh -- re-deriving nav on a watered skirmish map would drop its naval/water layers.
+        patched_costs, payload = t.raw["costs.win.bdf"], t.costs_payload
     else:
         patched_costs, payload = None, t.costs_payload
 
@@ -250,7 +259,7 @@ def build_map(spec, verbose=True, install=True):
 
     # ---- assemble lua ----
     spawns_xyz = {a: (spawns[a][0] + 0.5, t.y(*spawns[a]), spawns[a][1] + 0.5) for a in armies}
-    terrain_id = sid if patch else t.id
+    terrain_id = sid if (patch or spec.get("ship_terrain")) else t.id
     save_lua = sm.make_save("".join(mk), len(armies), spec.get("playable_area", (40, 40, 984, 984)))
     scenario_lua = sm.make_scenario(sid, terrain_id, spec["name"], spawns_xyz,
                                     norush=spec.get("norush", 70.0),
@@ -265,8 +274,9 @@ def build_map(spec, verbose=True, install=True):
 
     # ---- package + install ----
     out = os.path.join(WS, spec["out"])
-    if patch:
-        # default: neutralize moving campaign scenery props (e.g. ambient "Mine Crawlers")
+    if patch or spec.get("ship_terrain"):
+        # ship the full terrain set under the new id (patched nav, or the ORIGINAL nav when
+        # ship_terrain); default: neutralize moving campaign scenery props (e.g. "Mine Crawlers")
         sm.package_patched(out, t, sid, save_lua, scenario_lua, patched_costs, minimap_dds=mm,
                            strip_props=spec.get("strip_props", "moving"))
     else:
