@@ -251,7 +251,7 @@ def build_map(spec, verbose=True, install=True):
     # ---- assemble lua ----
     spawns_xyz = {a: (spawns[a][0] + 0.5, t.y(*spawns[a]), spawns[a][1] + 0.5) for a in armies}
     terrain_id = sid if patch else t.id
-    save_lua = sm.make_save("".join(mk), len(armies))
+    save_lua = sm.make_save("".join(mk), len(armies), spec.get("playable_area", (40, 40, 984, 984)))
     scenario_lua = sm.make_scenario(sid, terrain_id, spec["name"], spawns_xyz,
                                     norush=spec.get("norush", 70.0),
                                     reverb=sm.TERRAINS.get(t.id, {}).get("reverb", t.id))
@@ -291,6 +291,9 @@ SPECS = {
         # undulating to place structures on). The water rift + rocky cliffs are preserved as the
         # only — and visually obvious — no-build areas.
         smooth=dict(keep_slope=6.0, radius=7, passes=2, water_margin=4.0),
+        # The flat desert runs to the map edge on every side (only the NE is the water rift), so
+        # open the playable boundary out from the default 40-cell inset to expose it symmetrically.
+        playable_area=(8, 8, 1016, 1016),
         economy=dict(base_mass=4, sites=10, per_site=3), norush=70,
         patch=dict(max_slope=6, water_margin=4, seed=(160,500),
                    causeways=[(360, 701, 470, 561)]),   # ford through the central islets
@@ -308,6 +311,7 @@ SPECS = {
         # Level the gentle desert flat for broad buildability (water rift + cliffs preserved) —
         # same fix as the 3v3.
         smooth=dict(keep_slope=6.0, radius=7, passes=2, water_margin=4.0),
+        playable_area=(8, 8, 1016, 1016),   # open the boundary to the map edge (same as the 3v3)
         patch=dict(max_slope=6, water_margin=4, seed=(160,500),
                    causeways=[(360, 701, 470, 561)]),
         minimap="desert",
