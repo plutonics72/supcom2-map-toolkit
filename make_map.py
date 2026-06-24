@@ -54,6 +54,16 @@ def build_map(spec, verbose=True, install=True):
         t.raw["terrain.win.bdf"] = sm.reskin_terrain(t.raw["terrain.win.bdf"], spec["reskin"])
         log(f"re-skinned {len(spec['reskin'])//2} ground layers")
 
+    # ---- flatten buildable pads/plains (undulating dunes -> flat clearings; rest stays rough) ----
+    if spec.get("flatten"):
+        t.set_hfield(sm.flatten_regions(t.raw["hfield.win.bdf"], spec["flatten"]))
+        log(f"flattened {len(spec['flatten'])} buildable region(s)")
+
+    # ---- smooth ALL gentle land for broad buildability (cliffs + water preserved) ----
+    if spec.get("smooth"):
+        t.set_hfield(sm.flatten_gentle(t.raw["hfield.win.bdf"], t, **spec["smooth"]))
+        log("smoothed gentle terrain for buildability (cliffs/water preserved)")
+
     # land layer for placement/verify; override for maps whose auto-detect is fooled
     # (e.g. a lake map with no waterDepth.dds, where the true land-only layer must be named).
     landL = spec.get("land_layer", t.land_layer())
@@ -277,6 +287,10 @@ SPECS = {
         out="_dune_rift_3v3.scd",
         anchors={1:(150,230), 2:(150,500), 3:(170,815), 4:(864,400), 5:(884,585), 6:(820,840)},
         teams=[[1,2,3],[4,5,6]],
+        # Smooth ALL the gentle desert so it's broadly BUILDABLE (dunes were walkable but too
+        # undulating to place structures on). The water rift + rocky cliffs are preserved as the
+        # only — and visually obvious — no-build areas.
+        smooth=dict(keep_slope=6.0, radius=7, passes=2, water_margin=4.0),
         economy=dict(base_mass=4, sites=10, per_site=3), norush=70,
         patch=dict(max_slope=6, water_margin=4, seed=(160,500),
                    causeways=[(360, 701, 470, 561)]),   # ford through the central islets
@@ -291,6 +305,9 @@ SPECS = {
         anchors={1:(150,230), 2:(170,815), 3:(864,400), 4:(820,840)},
         teams=[[1,2],[3,4]],
         economy=dict(base_mass=4, sites=8, per_site=3), norush=70,
+        # Level the gentle desert flat for broad buildability (water rift + cliffs preserved) —
+        # same fix as the 3v3.
+        smooth=dict(keep_slope=6.0, radius=7, passes=2, water_margin=4.0),
         patch=dict(max_slope=6, water_margin=4, seed=(160,500),
                    causeways=[(360, 701, 470, 561)]),
         minimap="desert",

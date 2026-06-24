@@ -81,6 +81,22 @@ Campaign terrains carry ambient scenery props (e.g. the Illuminate desert's roam
 so your map doesn't inherit wandering vehicles; set `strip_props=False` to keep them,
 `"all"` to drop every prop, or a tuple of name substrings to target specific ones.
 
+### Making campaign terrain buildable
+
+Campaign terrains are often navigable after a PATCH but too **undulating to build on**
+(SC2 needs flatter ground to place a structure than to move a unit across). Two spec keys
+fix that:
+
+```python
+smooth=dict(keep_slope=6.0, water_margin=4.0)   # level ALL gentle land flat -> broadly buildable
+flatten=[("disc", 300, 500, 72)]                 # or flatten only specific pads / plains
+```
+
+`smooth` defaults to `mode="level"`: it sets the gentle land to one flat height (reliable,
+dead-flat buildable), keeping cliffs (original slope > `keep_slope`) and water as the only
+no-build areas. Pass `mode="smooth"` to box-blur instead (keeps undulation but may leave
+some ground unbuildable). On the Illuminate desert this took buildable area from ~34% to ~95%.
+
 ## What's in here
 
 | File | Purpose |
@@ -115,8 +131,10 @@ detail in [`FORMATS.md`](FORMATS.md).
 - The build-time check guarantees the *map data* is sound (every position navigable,
   all spawns reachable). It does **not** guarantee the skirmish AI plays a given terrain
   well — do a quick test match before a serious game.
-- This edits **navigability**, not terrain geometry or textures. Sculpting brand-new
-  landforms (rewriting the terrain mesh) is the one format not cracked here.
+- Terrain editing here is **heightfield-level**: you can raise, lower, level, or sculpt
+  ground height (e.g. flatten undulating desert so it's buildable) and re-skin ground
+  textures. What's *not* cracked: adding a water system to a map that ships dry, and the
+  skybox / environment lighting — so you can't conjure new water or relight a map here.
 - Tested on Windows; path auto-detection includes Linux/macOS Steam locations but the
   game itself is Windows-era — your mileage may vary off-Windows.
 

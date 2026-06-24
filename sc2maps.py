@@ -718,6 +718,108 @@ def reskin_map(src_id, dst_id, src_prefix, dst_prefix, layers):
                 f"/textures/Terrain/{dst_id}/{dst_prefix}{dl}_{ch}.dds"
     return m
 
+
+def flatten_regions(hfield_bytes, regions):
+    """Flatten each region to its own MEAN height (dead-flat => BUILDABLE), leaving the rest of the
+    terrain untouched so the surrounding dunes stay visibly rough/unbuildable. Use to carve buildable
+    clearings out of an undulating campaign terrain (e.g. desert) without flattening the whole map.
+      ("disc", cx, cz, r)          flat circular pad
+      ("rect", x0, z0, x1, z1)     flat rectangular plain
+    Returns rebuilt hfield.win.bdf bytes (pair with Terrain.set_hfield)."""
+    pl = bytearray(read_bdf_payload(hfield_bytes))
+    _, w, h, _, hd = struct.unpack_from("<5I", pl, 0)
+    def gy(x, z): return struct.unpack_from("<H", pl, hd + (z*w + x)*2)[0]
+    def put(x, z, v): struct.pack_into("<H", pl, hd + (z*w + x)*2, max(0, min(65535, int(v))))
+    for reg in regions:
+        cells = []
+        if reg[0] == "disc":
+            _, cx, cz, r = reg
+            for dz in range(-r, r+1):
+                for dx in range(-r, r+1):
+                    if dx*dx + dz*dz <= r*r and 0 <= cx+dx < w and 0 <= cz+dz < h:
+                        cells.append((cx+dx, cz+dz))
+        else:
+            _, x0, z0, x1, z1 = reg
+            for z in range(max(0, z0), min(h, z1)):
+                for x in range(max(0, x0), min(w, x1)):
+                    cells.append((x, z))
+        if not cells:
+            continue
+        mean = sum(gy(x, z) for x, z in cells) // len(cells)
+        for x, z in cells:
+            put(x, z, mean)
+    return rebuild_bdf(hfield_bytes, pl)
+
+
+def flatten_gentle(hfield_bytes, terrain, keep_slope=6.0, radius=7, passes=2, water_margin=4.0,
+                   mode="level"):
+    """Make the WHOLE gentle land broadly BUILDABLE while preserving the genuinely-impassable
+    features (cells whose ORIGINAL slope exceeds keep_slope = cliffs/rift walls, and cells below
+    the water line = the rift). Two modes:
+      - "level"  : set every gentle-dry cell to ONE shared mean height -> dead flat -> guaranteed
+                   buildable everywhere that isn't cliff/water (the dunes are modest amplitude so
+                   the leveled plain is artifact-free). The reliable one.
+      - "smooth" : separable box-blur of the gentle land (keeps large-scale variation but often
+                   leaves residual slope above SC2's build tolerance).
+    Returns rebuilt hfield.win.bdf."""
+    pl = bytearray(read_bdf_payload(hfield_bytes))
+    _, w, h, _, hd = struct.unpack_from("<5I", pl, 0)
+    n = w * h
+    H = list(struct.unpack_from(f"<{n}H", pl, hd))
+    orig = H[:]
+    thr = int(keep_slope * 128)
+    waterraw = int((_water_level(terrain) + water_margin) * 128)
+    def gentle(x, z):
+        c = orig[z * w + x]
+        if c < waterraw:
+            return False
+        s = max(abs(orig[z * w + x + 1] - c), abs(orig[z * w + x - 1] - c),
+                abs(orig[(z + 1) * w + x] - c), abs(orig[(z - 1) * w + x] - c))
+        return s <= thr
+    if mode == "level":
+        tot = cnt = 0
+        for z in range(1, h - 1):
+            for x in range(1, w - 1):
+                if gentle(x, z):
+                    tot += orig[z * w + x]
+                    cnt += 1
+        mean = tot // max(cnt, 1)
+        for z in range(1, h - 1):
+            for x in range(1, w - 1):
+                if gentle(x, z):
+                    H[z * w + x] = mean
+    else:
+        def blur(src):
+            tmp = [0] * n
+            for z in range(h):
+                b = z * w
+                pre = [0] * (w + 1)
+                for x in range(w):
+                    pre[x + 1] = pre[x] + src[b + x]
+                for x in range(w):
+                    lo = x - radius if x - radius > 0 else 0
+                    hi = x + radius if x + radius < w - 1 else w - 1
+                    tmp[b + x] = (pre[hi + 1] - pre[lo]) // (hi - lo + 1)
+            out = [0] * n
+            for x in range(w):
+                pre = [0] * (h + 1)
+                for z in range(h):
+                    pre[z + 1] = pre[z] + tmp[z * w + x]
+                for z in range(h):
+                    lo = z - radius if z - radius > 0 else 0
+                    hi = z + radius if z + radius < h - 1 else h - 1
+                    out[z * w + x] = (pre[hi + 1] - pre[lo]) // (hi - lo + 1)
+            return out
+        for _ in range(passes):
+            H = blur(H)
+        for z in range(1, h - 1):
+            for x in range(1, w - 1):
+                if not gentle(x, z):
+                    H[z * w + x] = orig[z * w + x]
+    for i in range(n):
+        struct.pack_into("<H", pl, hd + i * 2, H[i])
+    return rebuild_bdf(hfield_bytes, pl)
+
 # ---------------------------------------------------------------------------
 # PNG (debug renders) — pure stdlib
 # ---------------------------------------------------------------------------
