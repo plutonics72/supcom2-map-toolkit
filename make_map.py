@@ -173,7 +173,8 @@ def build_map(spec, verbose=True, install=True):
         return [place(sx+dx, sz+dz) for dx, dz in ((-d0,-d0),(d0,-d0),(-d0,d0),(d0,d0))]
 
     # ---- placeable cells (navigable, dry, flat) ----
-    placeable = [(cx, cz) for cx in range(72, 953, 6) for cz in range(72, 953, 6)
+    _hi = t.grid - 71                      # was hardcoded 953 (=1024-71); generalize for 512-grid maps
+    placeable = [(cx, cz) for cx in range(72, _hi, 6) for cz in range(72, _hi, 6)
                  if nav(cx, cz) and t.dry(cx, cz) and _spread(t, cx, cz) < 2.5]
     log(f"placeable cells: {len(placeable)}")
 
@@ -239,7 +240,15 @@ def build_map(spec, verbose=True, install=True):
     elif spec.get("ship_terrain"):
         # ship the (modified, e.g. reskinned) terrain under the new id but KEEP the original
         # navmesh -- re-deriving nav on a watered skirmish map would drop its naval/water layers.
-        patched_costs, payload = t.raw["costs.win.bdf"], t.costs_payload
+        if spec.get("naval_extend"):
+            # the hfield was EXTENDED (new beaches raised from water): open them on the LAND
+            # layers so units can use the new land, while keeping the naval/water layers intact.
+            ne = spec["naval_extend"] if isinstance(spec["naval_extend"], dict) else {}
+            patched_costs, payload, _added = sm.open_extended_land(
+                t, ne.get("max_slope", 6.0), ne.get("water_margin", 4.0), ne.get("water_level"))
+            log(f"naval-extend: opened {_added} new beach cells on the land layers (naval kept)")
+        else:
+            patched_costs, payload = t.raw["costs.win.bdf"], t.costs_payload
     else:
         patched_costs, payload = None, t.costs_payload
 
@@ -252,10 +261,19 @@ def build_map(spec, verbose=True, install=True):
         return payload[t.layers[landL][2]+idx] != 255
     bad = [p for p in allpts if not navok(*p)]
     assert not bad, f"VERIFY FAILED — blocked positions: {bad[:8]}"
-    for a in armies[1:]:
-        assert sm.reachable(payload, t.layers, spawns[armies[0]], spawns[a], landL), \
-            f"VERIFY FAILED — ARMY_{a} not reachable from ARMY_{armies[0]} by land"
-    log(f"VERIFIED: all {len(allpts)} positions navigable; all spawns mutually reachable")
+    if spec.get("teams_connected", True):
+        for a in armies[1:]:
+            assert sm.reachable(payload, t.layers, spawns[armies[0]], spawns[a], landL), \
+                f"VERIFY FAILED — ARMY_{a} not reachable from ARMY_{armies[0]} by land"
+        log(f"VERIFIED: all {len(allpts)} positions navigable; all spawns mutually reachable")
+    else:
+        # naval map: teams sit on water-separated landmasses, so only require each TEAM's own
+        # spawns to be mutually land-reachable (cross-team contact is by sea/air).
+        for team in spec.get("teams", [armies]):
+            for a in team[1:]:
+                assert sm.reachable(payload, t.layers, spawns[team[0]], spawns[a], landL), \
+                    f"VERIFY FAILED — ARMY_{a} not reachable from teammate ARMY_{team[0]} by land"
+        log(f"VERIFIED: all {len(allpts)} navigable; intra-team reachable (teams water-separated)")
 
     # ---- assemble lua ----
     spawns_xyz = {a: (spawns[a][0] + 0.5, t.y(*spawns[a]), spawns[a][1] + 0.5) for a in armies}

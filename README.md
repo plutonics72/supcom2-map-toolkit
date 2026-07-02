@@ -126,15 +126,58 @@ region (the mission area); this tool floods the dry, gently-sloped terrain into 
 big navigable island and (optionally) carves causeways across water. Full byte-level
 detail in [`FORMATS.md`](FORMATS.md).
 
+## The render mesh — editing what you SEE
+
+The single most important engine fact (proven in-game with paired mesh-only /
+heightfield-only edits on two maps): **SC2 draws every map from a precompiled
+mesh inside `terrain.win.bdf`; the heightfield drives gameplay only** (unit
+height, navigation, buildability). Sculpting the heightfield alone changes an
+*invisible* world. To visibly reshape a map, edit **both** layers:
+
+```python
+import sc2maps as sm
+
+t = sm.Terrain("SC2_MP_302")
+hf0 = t.raw["hfield.win.bdf"]
+hf1 = sm.reshape_hfield(hf0, [("disc", 512, 512, 60, 70.0, "set")])  # gameplay
+terr, moved = sm.resample_mesh_heights(                              # visuals
+    t.raw["terrain.win.bdf"], hf0, hf1,
+    bvh_min_y=40.0, bvh_max_y=75.0)          # widen culling bounds to cover
+```
+
+`resample_mesh_heights` finds the mesh's plain-float vertex buffer (it sits in
+a fixup-free region, so in-place edits are safe), gates on mesh/heightfield
+correlation (r > 0.9) so it refuses unfamiliar layouts, applies the height
+*delta* per vertex (preserving sub-sample mesh detail), and skips the water
+sheet / horizon skirt / underplanes automatically. This is how a coastline can
+be pushed out, a strait carved through an island, or a border berm raised —
+and have it actually show on screen.
+
+Two companion discoveries matter for water and scenery:
+
+- **Water is masked by a texture the terrain file references by PATH.** The
+  visible water is a full-map sheet clipped per-pixel by `waterDepth.dds` —
+  loaded via a path string inside `terrain.win.bdf`. Ship a map under a new id
+  and it keeps clipping with the *donor's* mask until you retarget the string
+  (`retarget_waterdepth_path`, same-length ids) and provide a replacement mask
+  with the full mip chain (`write_waterdepth_dds_mips`).
+- **Scenery props are positionally editable** (`edit_props`): each 44-byte
+  MapProp record carries a plain float3 position. Sink a prop (y = −100) to
+  remove it, or relocate it (trees make excellent visible map-border markers —
+  geometry alone reads poorly from the top-down camera because lighting is
+  baked).
+
+Known cosmetic limits: per-vertex normals are baked, so re-heighted ground
+keeps its old shading, and steep new slopes stretch the old texture.
+
 ## Caveats
 
 - The build-time check guarantees the *map data* is sound (every position navigable,
   all spawns reachable). It does **not** guarantee the skirmish AI plays a given terrain
   well — do a quick test match before a serious game.
-- Terrain editing here is **heightfield-level**: you can raise, lower, level, or sculpt
-  ground height (e.g. flatten undulating desert so it's buildable) and re-skin ground
-  textures. What's *not* cracked: adding a water system to a map that ships dry, and the
-  skybox / environment lighting — so you can't conjure new water or relight a map here.
+- What's *not* cracked: adding a water system to a map that ships dry (the water
+  sheet + shader setup are baked), recomputing baked lighting/normals, per-region
+  texture painting (re-skins are whole-layer), and the skybox / environment.
 - Tested on Windows; path auto-detection includes Linux/macOS Steam locations but the
   game itself is Windows-era — your mileage may vary off-Windows.
 

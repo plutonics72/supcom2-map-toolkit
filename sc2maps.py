@@ -167,6 +167,12 @@ class Terrain:
         _, self.n_layers, toff = struct.unpack_from("<3I", self.costs_payload, 0)
         self.layers = [struct.unpack_from("<7I", self.costs_payload, toff + 28*i)
                        for i in range(self.n_layers)]
+        # nav/cost grid resolution = hfield_width - 1 (1024 for a 1025 hfield, 2048 for 2049).
+        # GRID is a module global the nav functions read, so point it at THIS terrain's grid;
+        # builds are sequential (one terrain at a time) so the global always matches.
+        global GRID
+        self.grid = self.HW - 1
+        GRID = self.grid
 
     def set_hfield(self, hfield_bytes):
         """Swap in a (sculpted) heightfield and re-parse heights, so all queries +
@@ -192,7 +198,7 @@ class Terrain:
     def dry(self, x, z):
         if self._wd is None:
             return True
-        ti = min(511, round(x) * 511 // 1024); tj = min(511, round(z) * 511 // 1024)
+        ti = min(511, round(x) * 511 // self.grid); tj = min(511, round(z) * 511 // self.grid)
         o = ((tj // 4) * 128 + (ti // 4)) * 16
         return max(self._wd[o], self._wd[o + 1]) <= 32
 
@@ -259,9 +265,11 @@ class Terrain:
 # ---------------------------------------------------------------------------
 # Navmesh patching — open dry/gentle terrain, carve causeways, verify
 # ---------------------------------------------------------------------------
-def dry_gentle_mask(terrain, max_slope_world=6.0, water_margin=4.0):
-    """1024x1024 bytearray: 1 where the cell is dry land of walkable slope."""
-    dry_raw = int((_water_level(terrain) + water_margin) * 128)
+def dry_gentle_mask(terrain, max_slope_world=6.0, water_margin=4.0, water_level=None):
+    """GRIDxGRID bytearray: 1 where the cell is dry land of walkable slope. Pass water_level to
+    override the (often unreliable) auto-detected level -- e.g. on naval maps whose plane sits high."""
+    wl = _water_level(terrain) if water_level is None else water_level
+    dry_raw = int((wl + water_margin) * 128)
     slope_raw = int(max_slope_world * 128)
     m = bytearray(GRID*GRID)
     for z in range(1, GRID-1):
@@ -303,6 +311,36 @@ def component_of(mask, seed_x, seed_z):
                 if mask[j] and not comp[j]:
                     comp[j] = 1; n += 1; q.append(j)
     return comp, n
+
+def open_extended_land(terrain, max_slope_world=6.0, water_margin=4.0, water_level=None):
+    """For a WATERED map whose heightfield was EXTENDED (new beaches raised out of the water):
+    mark the new dry-gentle land navigable on the LAND-only movement layers, while leaving the
+    naval/water layers intact so ships still use the channel + flanks. Rebuilds island metadata so
+    it stays MP-safe. Returns (rebuilt costs.win.bdf bytes, patched payload, cells_added)."""
+    payload = bytearray(terrain.costs_payload)
+    mask = dry_gentle_mask(terrain, max_slope_world, water_margin, water_level)
+    landL = terrain.land_layer(); oL = terrain.layers[landL][2]
+    # sample a WET cell (per the baked waterDepth) to learn which layers are LAND-only (blocked
+    # over water) -- robust across maps regardless of where the water plane sits.
+    deep = None
+    for s in range(0, GRID*GRID, 997):
+        x, z = s % GRID, s // GRID
+        if not terrain.dry(x, z):
+            deep = s; break
+    if deep is None:
+        land_layers = [landL]
+    else:
+        land_layers = [li for li, rec in enumerate(terrain.layers) if payload[rec[2]+deep] == 255]
+        if landL not in land_layers:
+            land_layers.append(landL)
+    added = 0
+    for i in range(GRID*GRID):
+        if mask[i] and payload[oL+i] == 255:     # newly dry-gentle land still flagged water
+            for li in land_layers:
+                payload[terrain.layers[li][2]+i] = 1
+            added += 1
+    _recompute_islands(payload, terrain.layers)
+    return rebuild_bdf(terrain.raw["costs.win.bdf"], payload), payload, added
 
 def patch_costs(terrain, component):
     """Open `component` (cost=1) on every layer, then REBUILD each layer's island grid
@@ -397,7 +435,20 @@ def reachable(payload, layers, a, b, layer=0):
     return seen[t] == 1
 
 def _water_level(terrain):
-    return TERRAINS.get(terrain.id, {}).get("water_y", 0.0)
+    """Water-plane height. A non-zero catalog value wins; otherwise read the value baked in
+    info.win.bdf at offset 216 (the old catalog-only lookup returned 0 for most maps)."""
+    cat = TERRAINS.get(terrain.id, {}).get("water_y")
+    if cat:
+        return cat
+    info = terrain.raw.get("info.win.bdf")
+    if info:
+        try:
+            v = struct.unpack_from("<f", read_bdf_payload(info), 216)[0]
+            if 0.5 < v < 500.0:
+                return v
+        except Exception:
+            pass
+    return 0.0
 
 # ---------------------------------------------------------------------------
 # Lua generation (markers, save, scenario)
@@ -422,8 +473,9 @@ def mass_marker(name, x, z, y):
 
 def armies_tail(n_armies):
     """The Chains + Armies Lua blocks for n_armies (+ARMY_EXTRA), lifted from a stock
-    skirmish save (MP_204 for <=4 armies, MP_206 for 5-6)."""
-    src = "SC2_MP_206_save.lua" if n_armies > 4 else "SC2_MP_204_save.lua"
+    skirmish save (MP_204 for <=4 armies, MP_206 for 5-6, MP_304 for 7-8)."""
+    src = ("SC2_MP_304_save.lua" if n_armies > 6 else
+           "SC2_MP_206_save.lua" if n_armies > 4 else "SC2_MP_204_save.lua")
     txt = read_entry(UNCOMPILED_SCD, src).decode("utf8", "ignore")
     tail = txt[txt.index("    Chains = {"):]
     for a in list(range(1, n_armies+1)) + ["EXTRA"]:
@@ -634,6 +686,43 @@ def reshape_hfield(hfield_bytes, ops):
                 for x in range(max(0, ax0), min(w, ax1)):
                     t = ((x if along_x else z) - lo_c) / span
                     put(x, z, y_lo + (y_hi - y_lo) * max(0.0, min(1.0, t)), mode)
+        elif k == "extend":
+            # grow the EXISTING shoreline outward (a real beach): raise shallow water that hugs
+            # land, sloping from `level` at the coast down to 0 over `dist` cells. Multi-source BFS
+            # gives distance-to-shore so it follows the coastline instead of dropping flat discs.
+            # Keeps a water channel where |x - z| < channel_w (the NW-SE diagonal) and leaves water
+            # beyond center_r of the map centre untouched (the far flanks).
+            from collections import deque
+            _, dist, level, waterline, channel_w, center_r = op
+            wr = int(waterline * 128); INF = 1 << 30
+            D = [INF] * (w * h); q = deque()
+            for z in range(h):
+                b = z * w
+                for x in range(w):
+                    if get(x, z) > wr:
+                        D[b + x] = 0; q.append(b + x)
+            while q:
+                i = q.popleft(); d0 = D[i]
+                if d0 >= dist: continue
+                cx = i % w; cz = i // w
+                for dx, dz in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                    nx, nz = cx + dx, cz + dz
+                    if 0 <= nx < w and 0 <= nz < h:
+                        j = nz * w + nx
+                        if D[j] > d0 + 1:
+                            D[j] = d0 + 1; q.append(j)
+            cxm, czm = w // 2, h // 2; r2 = center_r * center_r
+            for z in range(h):
+                b = z * w
+                for x in range(w):
+                    d = D[b + x]
+                    if 0 < d < dist and get(x, z) <= wr:
+                        if abs(x - z) <= channel_w:
+                            continue
+                        if (x - cxm) ** 2 + (z - czm) ** 2 > r2:
+                            continue
+                        base = waterline + 5.0   # outer edge sits clearly ABOVE the water plane,
+                        put(x, z, base + (level - base) * (1.0 - d / dist), "raise")  # so it's dry land
     return rebuild_bdf(hfield_bytes, payload)
 
 
@@ -993,6 +1082,191 @@ def uninstall(scd_basename):
 def list_installed():
     return sorted(f for f in os.listdir(GAMEDATA)
                   if f.startswith("_") and f.endswith(".scd"))
+
+# ---------------------------------------------------------------------------
+# RENDER MESH (terrain.win.bdf) — the terrain you SEE.
+#
+# KEY ENGINE FACT (proven in-game with paired mesh-only / hfield-only edits on
+# MP_001 and MP_007): SC2 renders EVERY map from a precompiled mesh stored in
+# terrain.win.bdf. The heightfield drives GAMEPLAY only (unit Y, navigation,
+# buildability). There are no "live-rendered" maps — to visibly reshape a map,
+# edit BOTH layers: sculpt hfield.win.bdf (gameplay) and resample the mesh
+# from it (visuals). Textures and lighting are baked, so re-heighted areas
+# keep their old shading (the shape change is visible; light is not redone).
+#
+# Payload layout (ver-6 header; verified on MP_001/MP_007/MP_302/CA_I01):
+#   [20 B header: u32 ver, n_records, 20, n_records, strtab_off, ...]
+#   [directory: n_records x 108 B — +12 cum vertex, +16 cum index, +32 offset
+#    of the record's BVH block, +96 float3 bbox centre]
+#   [BVH blocks: 56-B nodes = float6 AABB + fixup-patched pointers]
+#   [string table: texture/shader paths, incl. the waterDepth.dds path]
+#   [mesh blob: u32 x 5 header (3, NV, 20, NI, 20+NV*32); vertex buffer
+#    NV x 32 B = float3 world position + 20 B packed attrs (normals/uv);
+#    index buffer NI x u32, per-record-relative]
+# Records are split by material (land / seafloor / shore / water sheet /
+# horizon skirt). The vertex+index blob sits AFTER the last container fixup,
+# so in-place value edits are safe — the same mechanism as the path reskins.
+#
+# VISIBLE WATER: a full-map sheet at water_y, clipped per-pixel by the
+# waterDepth.dds mask, which the engine loads via the PATH STRING in the
+# string table. A map shipped under a new id keeps reading the DONOR's mask
+# until that string is retargeted (same-length ids only), and the replacement
+# mask must carry the full mip chain (write_waterdepth_dds_mips).
+# ---------------------------------------------------------------------------
+
+def hfield_heights(hfield_bytes):
+    """Parse a hfield.win.bdf -> (heights u16 tuple, width). world_y = raw/128."""
+    pl = read_bdf_payload(hfield_bytes)
+    _, w, h, _, hd = struct.unpack_from("<5I", pl, 0)
+    return struct.unpack_from(f"<{w*h}H", pl, hd), w
+
+def hf_sample(H, hw, x, z):
+    """Bilinear WORLD-height sample of a parsed heightfield at world (x, z)."""
+    x = min(max(x, 0.0), hw - 1.001); z = min(max(z, 0.0), hw - 1.001)
+    x0, z0 = int(x), int(z); fx, fz = x - x0, z - z0
+    a = H[z0*hw + x0]; b = H[z0*hw + x0 + 1]
+    c = H[(z0+1)*hw + x0]; d = H[(z0+1)*hw + x0 + 1]
+    return ((a*(1-fx) + b*fx)*(1-fz) + (c*(1-fx) + d*fx)*fz) / 128.0
+
+def locate_mesh_blob(terrain_bytes):
+    """Find the render-mesh blob in a terrain.win.bdf.
+    Returns (payload, blob_offset, n_verts, n_indices) or raises. The blob
+    header [3, NV, 20, NI, 20+NV*32] sits just past the last fixup target."""
+    payload = read_bdf_payload(terrain_bytes)
+    nfix = struct.unpack_from("<I", terrain_bytes, 0x18)[0]
+    maxfix = max(struct.unpack_from(f"<{nfix}I", terrain_bytes, 0x1c))
+    for off in range(max(0, maxfix - 16) & ~3, min(len(payload) - 20, maxfix + 8192), 4):
+        a, b, c, d, e = struct.unpack_from("<5I", payload, off)
+        if a == 3 and c == 20 and 0 < b < 5_000_000 and e == 20 + b*32:
+            end = off + 20 + b*32 + d*4
+            if len(payload) - 64 <= end <= len(payload):
+                return payload, off, b, d
+    raise ValueError("render-mesh blob not found (unknown terrain layout)")
+
+def mesh_hfield_correlation(payload, blob_off, n_verts, H, hw, stride=7):
+    """Pearson r between mesh vertex Y and the heightfield at each (x, z) —
+    the safety gate to run before editing an unfamiliar map (expect > 0.9)."""
+    vb = blob_off + 20
+    n = sx = sy = sxx = syy = sxy = 0
+    for k in range(0, n_verts, stride):
+        o = vb + k*32
+        x, y, z = struct.unpack_from("<3f", payload, o)
+        if 0 <= x <= hw - 1 and 0 <= z <= hw - 1:
+            t = hf_sample(H, hw, x, z)
+            if abs(y - t) < 6.0:
+                n += 1; sx += y; sy += t; sxx += y*y; syy += t*t; sxy += y*t
+    den = ((n*sxx - sx*sx) * (n*syy - sy*sy)) ** 0.5
+    return (n*sxy - sx*sy) / den if den else 0.0
+
+def resample_mesh_heights(terrain_bytes, old_hfield_bytes, new_hfield_bytes,
+                          tol=2.0, min_r=0.9, bvh_min_y=None, bvh_max_y=None):
+    """Re-height the render mesh to match a sculpted heightfield (the VISUAL
+    half of the unified pipeline; pair with the hfield edit for gameplay).
+
+    Only vertices that TRACK the old heightfield (|y - old| < tol, in-map) are
+    moved — the water sheet, horizon skirt and underplanes are skipped
+    automatically because they don't track terrain. Optionally widens the BVH
+    culling AABBs (sanity-gated) so raised/lowered ground isn't culled:
+    pass bvh_min_y / bvh_max_y covering your new height range.
+    Returns (rebuilt terrain.win.bdf bytes, vertices_moved)."""
+    H0, hw = hfield_heights(old_hfield_bytes)
+    H1, hw1 = hfield_heights(new_hfield_bytes)
+    assert hw == hw1, "heightfield sizes differ"
+    payload, blob_off, nv, _ni = locate_mesh_blob(terrain_bytes)
+    r = mesh_hfield_correlation(payload, blob_off, nv, H0, hw)
+    if r < min_r:
+        raise ValueError(f"mesh/hfield correlation {r:.3f} < {min_r} — refusing to edit")
+    pl = bytearray(payload)
+    vb = blob_off + 20
+    moved = 0
+    for k in range(nv):
+        o = vb + k*32
+        x, y, z = struct.unpack_from("<3f", pl, o)
+        if 0 <= x <= hw - 1 and 0 <= z <= hw - 1 and abs(y - hf_sample(H0, hw, x, z)) < tol:
+            dy = hf_sample(H1, hw, x, z) - hf_sample(H0, hw, x, z)
+            if abs(dy) > 0.01:                      # apply the DELTA — keeps the mesh's
+                struct.pack_into("<f", pl, o + 4, y + dy); moved += 1  # sub-sample detail
+    if bvh_min_y is not None or bvh_max_y is not None:
+        nrec = struct.unpack_from("<I", pl, 4)[0]
+        strtab = struct.unpack_from("<I", pl, 16)[0]
+        offs = sorted(struct.unpack_from("<I", pl, 20 + rr*108 + 32)[0] for rr in range(nrec))
+        blocks = [(offs[i], offs[i+1] if i + 1 < len(offs) else strtab) for i in range(len(offs))]
+        sane = tot = 0; nodes = []
+        for s0, s1 in blocks:
+            if not (20 <= s0 < s1 <= len(pl)): continue
+            for o in range(s0, s1 - 55, 56):
+                bb = struct.unpack_from("<6f", pl, o); tot += 1
+                if bb[0] <= bb[3] and bb[1] <= bb[4] and bb[2] <= bb[5] and all(-9000 < v < 9000 for v in bb):
+                    sane += 1
+                    if bb[0] <= hw - 1 and bb[3] >= 0 and bb[2] <= hw - 1 and bb[5] >= 0:
+                        nodes.append(o)
+        if tot and sane / tot > 0.9:
+            for o in nodes:
+                if bvh_min_y is not None and struct.unpack_from("<f", pl, o+4)[0] > bvh_min_y:
+                    struct.pack_into("<f", pl, o+4, float(bvh_min_y))
+                if bvh_max_y is not None and struct.unpack_from("<f", pl, o+16)[0] < bvh_max_y:
+                    struct.pack_into("<f", pl, o+16, float(bvh_max_y))
+    return rebuild_bdf(terrain_bytes, bytes(pl)), moved
+
+def retarget_waterdepth_path(terrain_bytes, old_id, new_id):
+    """Point the water-mask reference at a new map id (in-place string swap —
+    ids must be the SAME LENGTH, e.g. SC2_MP_302 -> SC2_TRST01). Without this,
+    a map shipped under a new id keeps clipping its water with the DONOR's
+    waterDepth.dds and any land/water shape changes won't show in the water."""
+    assert len(old_id) == len(new_id), "ids must be equal length for in-place swap"
+    old_s = f"/maps/{old_id}/{old_id}.waterDepth.dds".encode()
+    new_s = f"/maps/{new_id}/{new_id}.waterDepth.dds".encode()
+    pl = bytearray(read_bdf_payload(terrain_bytes))
+    i = pl.find(old_s)
+    if i < 0:
+        raise ValueError("waterDepth path for old id not found")
+    pl[i:i+len(old_s)] = new_s
+    return rebuild_bdf(terrain_bytes, bytes(pl))
+
+def write_waterdepth_dds_mips(terrain, water_level, header=None, is_water=None):
+    """Like write_waterdepth_dds but with the FULL 10-level mip chain
+    (512 -> 1 px), byte-compatible with stock mipped masks — required when the
+    ENGINE reads the file (stock masks ship with mips; a mip-less replacement
+    is ignored/broken). Uses terrain.y(), so set_hfield() the sculpted
+    heights first."""
+    if header is None:
+        header = terrain.raw["waterDepth.dds"][:128]
+    if is_water is None:
+        is_water = lambda x, z: terrain.y(x, z) < water_level
+    def alpha(x, z):
+        if not is_water(x, z): return 0
+        return max(33, min(255, int((water_level - terrain.y(x, z)) * 40) + 80))
+    ext = terrain.HW - 1
+    out = bytearray(header[:128])
+    for P in (512, 256, 128, 64, 32, 16, 8, 4, 2, 1):
+        B = max(1, P // 4)
+        for bj in range(B):
+            for bi in range(B):
+                wx = (bi*4 + 2) * ext // max(1, P - 1) if P > 1 else ext // 2
+                wz = (bj*4 + 2) * ext // max(1, P - 1) if P > 1 else ext // 2
+                a = alpha(min(ext, wx), min(ext, wz))
+                out += bytes((a, a, 0, 0, 0, 0, 0, 0)) + struct.pack("<HHI", 0, 0, 0)
+    return bytes(out)
+
+def edit_props(mapobjs_bytes, edit):
+    """Positionally edit scenery props in mapobjs.win.bdf (44-B MapProp records:
+    quat 16 B, float3 position @+16, scale, blueprint-path ptr @+32, flags).
+    `edit(k, x, y, z, path_bytes)` returns None to keep, or a new (x, y, z) —
+    e.g. y=-100 sinks a prop out of the world; new x/z relocates it (props do
+    NOT snap to ground, so set y to the terrain height at the new spot).
+    In-place value edits only — safe. Returns (rebuilt bytes, n_changed)."""
+    pl = bytearray(read_bdf_payload(mapobjs_bytes))
+    _ver, pcount, poff = struct.unpack_from("<3I", pl, 0)
+    changed = 0
+    for k in range(pcount):
+        o = poff + k*44
+        x, y, z = struct.unpack_from("<3f", pl, o + 16)
+        bp = struct.unpack_from("<I", pl, o + 32)[0]
+        end = pl.find(b"\x00", bp)
+        new = edit(k, x, y, z, bytes(pl[bp:end]))
+        if new is not None:
+            struct.pack_into("<3f", pl, o + 16, *new); changed += 1
+    return rebuild_bdf(mapobjs_bytes, bytes(pl)), changed
 
 # ---------------------------------------------------------------------------
 # Terrain catalog — reusable facts derived during reverse-engineering.
