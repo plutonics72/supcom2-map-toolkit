@@ -93,7 +93,7 @@ def build_map(spec, verbose=True, install=True):
         if nav(x, z): return (round(x), round(z))
         cs = [(fx, fz) for fx in range(round(x)-r, round(x)+r+1, 2)
               for fz in range(round(z)-r, round(z)+r+1, 2)
-              if 0 < fx < 1023 and 0 < fz < 1023 and nav(fx, fz)]
+              if 0 < fx < t.grid - 1 and 0 < fz < t.grid - 1 and nav(fx, fz)]
         return min(cs, key=lambda p: _dist(p, (x, z))) if cs else (round(x), round(z))
 
     # A mass extractor needs a flat, clear FOOTPRINT, not just a navigable cell — a
@@ -113,7 +113,7 @@ def build_map(spec, verbose=True, install=True):
         return m
     def buildable(x, z, relief_max=0.5, step_max=0.25):
         x, z = round(x), round(z)
-        if not (6 < x < 1017 and 6 < z < 1017) or not t.dry(x, z):
+        if not (6 < x < t.grid - 7 and 6 < z < t.grid - 7) or not t.dry(x, z):
             return False
         if not all(nav(x+dx, z+dz) for dx in range(-2, 3) for dz in range(-2, 3)):
             return False
