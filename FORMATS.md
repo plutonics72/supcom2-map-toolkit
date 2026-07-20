@@ -50,11 +50,30 @@ Payload:
 ```
 `world_y = raw / 128.0`. World coordinates span 0..1024 and match marker positions.
 
-## Water mask (`<ID>.waterDepth.dds`)
+## Water mask (`<ID>.waterDepth.dds`) — the runtime land/water gate
 
-512×512 **DXT5** (128-byte DDS header, then 16-byte blocks). A cell is **water** if its
-block's alpha endpoints satisfy `max(block[0], block[1]) > 32`. Block for world (x,z):
-`((z*511//1024)//4) * 128 + ((x*511//1024)//4)`, times 16. (Land/dry otherwise.)
+512×512 **DXT5** (128-byte DDS header, then 16-byte blocks; found as either
+`<ID>.waterDepth.dds` or `<ID>.waterDepth.win.dds` — ship replacements under BOTH
+names). Block for world (x,z): `((z//scale)//4) * 128 + ((x//scale)//4)`, times 16,
+where `scale = map_size / 512`.
+
+**Decode the full DXT5 alpha block, not just the endpoints.** The 3-bit indices
+decide per-pixel values; endpoint pairs like `(0,255)` occur on both wet and dry
+blocks. Semantics: **alpha ≈ 0 = dry land; higher alpha = water** (depth-ish).
+Stock water values are regionally inconsistent (deep sea can decode 0 *or* 255 by
+region), so never patch by writing absolute "water" values — the only safe edit is:
+copy a decode-verified alpha-0 land block over blocks that are now dry, and keep
+every other block byte-identical to stock.
+
+**This texture is load-bearing for gameplay, not just rendering.** The engine
+classifies land vs water from it at runtime: new land still marked water gets
+move-orders refused (red cursor), lets submarines drive "ashore" (they believe
+they're submerged), draws water over the new ground, and makes the pathfinder
+detour around crossings whose approaches are still flagged. It is referenced by a
+path string inside the `terrain.win.bdf` **payload** (decompress before searching —
+container-level string searches silently miss). The reference only accepts an
+in-place same-length id swap (`retarget_waterdepth_path`); rename your map id to
+match the donor id's length if needed (e.g. `SC2_ISKEX3` ↔ `SC2_MP_304`).
 
 ## Navigation mesh (`<ID>.costs.win.bdf`) — the important one
 
@@ -87,6 +106,18 @@ makes units move (or stop). On water maps, the land-only class is the layer with
 fewest underwater-navigable cells (`Terrain.land_layer()`); other layers are
 amphibious/hover/naval (water is navigable on those by design).
 
+**Layers are unit classes (confirmed in-game).** On a 5-layer map the split is a
+land pair (e.g. 1/3) and an amphibious-class triple (0/2/4) — and on stock maps
+**all five are open on ordinary walkable land**: hover tanks and amphibious ships
+use the "water" layers on land too, and amphibious engineers path continuously
+from sea onto shore on them. Two symptoms to memorize: closing the amphib layers
+on new land → *"only the Commander can cross"* (the ACU is a land-layer unit;
+most tanks are hover-class); closing them on an island → engineers get the red
+no-entry cursor. Keeping pure naval units out of new land is `waterDepth.dds`'s
+job (runtime depth check), not layer closure. Corollary for editing: never
+re-derive a layer's walkability map-wide from slope — overlay minimal edits on
+the baked grid, or pathing goes subtly maze-like everywhere.
+
 Islands are baked at map-compile time, seeded from `gpnav "Playable Island"` markers
 and skirmish start positions. Campaign maps bake only the small mission region — so a
 campaign terrain is "open" by slope yet mostly non-navigable until patched. A map with
@@ -99,11 +130,32 @@ component extent, and rebuild. Leave water/cliff cells untouched so amphibious/n
 layers keep their access. To bridge water between two landmasses, also force a thin
 corridor of cells navigable (a causeway/ford). See `sc2maps.patch_costs` / `carve_box`.
 
-## Collision (`<ID>.collision2.win.bdf`)
+## Collision (`<ID>.collision2.win.bdf`) — invisible walls live here
 
-A low-poly triangle-mesh physics/raycast proxy of the terrain (float32 world-space
-vertices + u32 triangle indices + an AABB/BVH tree). It carries **no** navigability
-information and needs no edits for a nav patch. Documented for completeness.
+A low-poly triangle-mesh proxy of the terrain that the engine uses for unit
+**steering** and **weapon fire**. It carries no navigability information and needs
+no edits for a pure nav patch — but it MUST be updated whenever you reshape
+terrain: raising a deck over an old bank leaves the original ridge triangles
+poking through the new surface, an invisible wall that units bounce off and
+turrets shoot into, while every costs/heightfield analysis says "clear".
+
+Payload:
+```
+0x00  u32  version = 1
+0x04  u32  numVerts          (coarse: ~1,175 for a 1024 map)
+0x08  u32  vertOffset = 24
+0x0C  u32  numIndices        (3 per triangle)
+0x10  u32  indexOffset
+0x14  u32  extraOffset       (-> AABB/BVH-ish tree; leave untouched)
+      f32[numVerts*3]        world-space x,y,z at vertOffset
+```
+
+Verts are in a fixup-free region — in-place value edits are safe. The reliable
+reshape fix is a **global snap**: every in-map vert's y := `heightfield(x,z) − 0.3`
+(a faithful coarse copy of the *current* terrain; cliffs survive implicitly as
+steep triangles). Zone-limited clamping fails — with so few verts, triangles span
+any zone boundary and keep the wall alive. Lowering-only or ground-snap edits keep
+the stale tree safe: its too-tall bounds only cause harmless broad-phase hits.
 
 ## Other files
 
