@@ -32,16 +32,16 @@ build/deploy loop, and open work.
   The Trade-lab repo's bot is **retired for SC2 traffic** — it belongs to the
   user's separate trading work; never send SC2 messages through it.
 
-## Current shipped state (20 Jul 2026)
+## Current shipped state (23 Jul 2026)
 
 All maps live in the Drive folder with hashes; internal build-script versions
 differ from the user-facing versions in `READ ME - Install.txt` (that file wins).
 
 | Map (lobby name) | File | Map id | Status |
 |---|---|---|---|
-| [6] Dune Rift (3v3, FFA) v3 | `_dune_rift_3v3.scd` | `SC2_DUNE6` | good (user-confirmed) |
-| [6] Dune Rift - Two Bridges (3v3) v5 | `_dune_rift_bridge2.scd` | `SC2_DUNEB2` | good (user-confirmed) |
-| [4] Dune Rift (2v2) v2 | `_dune_rift_2v2.scd` | — | good; has NOT received the v3 mass-pad/ramp fixes |
+| [6] Dune Rift (3v3, FFA) v4 | `_dune_rift_3v3.scd` | `SC2_DUNE6` | good (23 Jul mesh sink-sync + first collision snap) |
+| [6] Dune Rift - Two Bridges (3v3) v6 | `_dune_rift_bridge2.scd` | `SC2_DUNEB2` | good (user-confirmed 23 Jul: "a lot better") |
+| [4] Dune Rift (2v2) v3 | `_dune_rift_2v2.scd` | — | good (23 Jul sync); still lacks the 3v3 mass-pad/ramp fixes |
 | [4] Treallach Strait (2v2) | `_treallach_strait.scd` | `SC2_TRST01` | good |
 | [8] Iskellian Extended (4v4) v5 | `_iskellian_ext8.scd` | `SC2_ISKEX3` | good (user-confirmed; islands 2.5×, 6 masses each) |
 | Frost Crater / Ashen Basin (3v3) | `_frost_crater_3v3.scd` / `_ashen_basin_3v3.scd` | — | good (re-skins) |
@@ -50,10 +50,18 @@ differ from the user-facing versions in `READ ME - Install.txt` (that file wins)
 Latest-generation build scripts (each is self-contained, reads the game files +
 prior installed maps, verifies, installs):
 
-- `_build_dunerift_bridges_v7.py` — Two Bridges, current. Full pipeline: capped
-  deck planes + aprons, forced mesh sync, global collision snap, legacy-nav
-  overlay with ALL FIVE layers opened on decks, waterDepth regen + retarget,
-  minimap causeway painting, prop railings, erosion r=3/r=5 verification gates.
+- `_build_dunerift_bridges_v8.py` — Two Bridges, current. v7's full pipeline
+  (capped deck planes + aprons, global collision snap, legacy-nav overlay with
+  ALL FIVE layers opened on decks, waterDepth regen + retarget, minimap
+  causeway painting, prop railings, erosion r=3/r=5 gates) PLUS map-wide mesh
+  sink-sync and a map-wide mesh gate. v7 synced/verified the mesh only inside
+  the causeway rects — 177 tiles of inherited terracing divergence shipped
+  (render mesh up to +40 ABOVE the heightfield: buildable ground inside drawn
+  dunes, structures buried, units vanished).
+- `_fix_dunerift_meshsync.py` — in-place port of the v8 fix to the 3v3 + 2v2
+  (both also got their FIRST global collision snap: 751 verts up to +69 above
+  ground = turret fire into invisible hills). Rewrites only terrain +
+  collision2 entries; every other archive entry stays byte-identical.
 - `_build_iskellian_v6.py` — Iskellian, current. Island growth with naval-corridor
   guards, stock-style layer treatment, waterDepth regen (decode-verified dry
   block; asserts water blocks stay byte-identical to stock), mass pads + inland
@@ -95,6 +103,14 @@ prior installed maps, verifies, installs):
 
 ## Open next steps
 
+- **Two Bridges turret no-fire (OPEN, differential pending)**: turrets at the
+  middle crossing don't fire at in-range targets. Installed collision verified
+  CLEAN — this is NOT the stale-collision class. Leading suspects: deck-edge
+  LOS shadow (a deck turret can't sight low water-level targets past the deck
+  lip — candidate fix: bevel the deck z-edges) vs. the palm railing props
+  eating shots along the span (candidate fix: thin/relocate rails). Waiting on
+  play-test detail: turret position (deck vs shore) × target position (on the
+  bridge vs on the water beside it).
 - **Dune Rift 2v2**: port the 3v3 v3 fixes (54 mass pads, basin ramps) — same
   script pattern, different file. Low risk, user-visible win.
 - **Boras Naval Test Range (MP_305)**: the best untouched canvas — 6-player
