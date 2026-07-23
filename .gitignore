@@ -20,3 +20,9 @@ archive/
 _tg/
 *.log
 _legacy_nav_out.txt
+
+# Secrets safety net — sc2bot config lives OUTSIDE the repo (see CLAUDE.md);
+# these patterns are insurance against a stray copy ever being staged
+telegram.json
+state.json
+config/

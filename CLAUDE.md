@@ -21,10 +21,16 @@ build/deploy loop, and open work.
   `READ ME - Install.txt` in that folder lists every map with size + SHA-256 —
   it is the canonical user-facing version record.
 - Telegram notifications (user's standing preference: message after every task /
-  fetch their play-test screenshots+videos) use `scripts/notify.py` +
-  `config/telegram.json` from the **separate private Trade-lab repo** — not here.
-  On a new machine, copy those two files over or skip notifications until set up.
-  Play-test media arrives via Bot API `getUpdates`/`getFile` (≤20 MB, ~24 h window).
+  fetch their play-test screenshots+videos) use the project's **own bot** via
+  `scripts/sc2bot.py` (stdlib-only): `send --tag done|failed|action|info
+  --title "SC2 Maps" "summary"`; `fetch --wait 60` pulls play-test media into
+  `_tg/` (Bot API `getUpdates`/`getFile`, ≤20 MB, ~24 h window). Config (token +
+  chat id) lives OUTSIDE this public repo — resolution: `SC2BOT_CONFIG` env →
+  `~\OneDrive\Personal\sc2bot\telegram.json` → `~\.config\sc2bot\telegram.json`.
+  New machine or new bot: the user runs `python scripts/sc2bot.py setup` in
+  their own terminal (the token never passes through chat or the repo).
+  The Trade-lab repo's bot is **retired for SC2 traffic** — it belongs to the
+  user's separate trading work; never send SC2 messages through it.
 
 ## Current shipped state (20 Jul 2026)
 
