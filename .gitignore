@@ -15,3 +15,8 @@ base*/
 navwork/
 previews/
 archive/
+
+# Session artifacts (never publish)
+_tg/
+*.log
+_legacy_nav_out.txt
