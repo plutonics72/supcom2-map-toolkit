@@ -50,7 +50,16 @@ differ from the user-facing versions in `READ ME - Install.txt` (that file wins)
 Latest-generation build scripts (each is self-contained, reads the game files +
 prior installed maps, verifies, installs):
 
-- `_build_dunerift_bridges_v8.py` — Two Bridges, current. v7's full pipeline
+- `_build_dunerift_bridges_v9.py` — Two Bridges, current. v8 + nav noise repair:
+  opening-only pass gives every gentle-slope dry 255-cell cost 1 on all five
+  layers (penalties preserved), pocket revert re-closes repair cells not
+  flood-connected to the main landmass, and two new gates: decks-removed
+  disconnection (no third crossing — the old carve_box water-walk ford stays
+  dead structurally via the wet_now closure) and zero main-adjacent blocked
+  flat-dry cells in the approach corridors. Root cause (24 Jul videos): the
+  base bake left 255 patches on flat dry desert — units threaded the gaps in
+  single-file conga lines and jammed at gap mouths.
+- `_build_dunerift_bridges_v8.py` — superseded by v9. v7's full pipeline
   (capped deck planes + aprons, global collision snap, legacy-nav overlay with
   ALL FIVE layers opened on decks, waterDepth regen + retarget, minimap
   causeway painting, prop railings, erosion r=3/r=5 gates) PLUS map-wide mesh
@@ -103,14 +112,16 @@ prior installed maps, verifies, installs):
 
 ## Open next steps
 
-- **Two Bridges turret no-fire (OPEN, differential pending)**: turrets at the
-  middle crossing don't fire at in-range targets. Installed collision verified
-  CLEAN — this is NOT the stale-collision class. Leading suspects: deck-edge
-  LOS shadow (a deck turret can't sight low water-level targets past the deck
-  lip — candidate fix: bevel the deck z-edges) vs. the palm railing props
-  eating shots along the span (candidate fix: thin/relocate rails). Waiting on
-  play-test detail: turret position (deck vs shore) × target position (on the
-  bridge vs on the water beside it).
+- **Two Bridges v9 nav repair: awaiting play-test confirmation (24 Jul)**.
+  Installed locally, NOT yet released to Drive. If confirmed, release as
+  user-facing v7 and port the same repair pass to the 3v3 and 2v2 (their
+  bakes carry the same 255 noise on flat ground).
+- **Turret no-fire (dormant)**: user could NOT replicate on 24 Jul after the
+  v8/collision work. Collision surface + waterDepth + LOS all measured clean
+  (stock tolerates far worse collision overhang than we ship). If it recurs,
+  get: turret type (tooltip), tracking-vs-idle, and target position. Ruled
+  out: stale collision, waterDepth misclassification, phantom triangle
+  overhang (stock baseline comparison in the 24 Jul session).
 - **Dune Rift 2v2**: port the 3v3 v3 fixes (54 mass pads, basin ramps) — same
   script pattern, different file. Low risk, user-visible win.
 - **Boras Naval Test Range (MP_305)**: the best untouched canvas — 6-player
