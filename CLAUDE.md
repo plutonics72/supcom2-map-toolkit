@@ -43,7 +43,7 @@ differ from the user-facing versions in `READ ME - Install.txt` (that file wins)
 | [6] Dune Rift - Two Bridges (3v3) v9 | `_dune_rift_bridge2.scd` | `SC2_DUNEB2` | released 25 Jul (nav repair + hover water fixes + oasis honesty); the LOBBY NAME carries the version — bump it every build |
 | [4] Dune Rift (2v2) v3 | `_dune_rift_2v2.scd` | — | good (23 Jul sync); still lacks the 3v3 mass-pad/ramp fixes |
 | [4] Treallach Strait (2v2) | `_treallach_strait.scd` | `SC2_TRST01` | good |
-| [8] Iskellian Extended (4v4) v5 | `_iskellian_ext8.scd` | `SC2_ISKEX3` | v5 on Drive; LOCAL lobby-v6 fix installed 25 Jul (ships-ashore: island shoreline was water-classified at 16-cell block granularity — every island-carrying waterDepth block now dry; island-zone collision snap; frozen units on island B were standing on the misclassified band) — awaiting play-test |
+| [8] Iskellian Extended (4v4) v6 | `_iskellian_ext8.scd` | `SC2_ISKEX3` | released 25 Jul (ships-ashore fixed: island shorelines were water-classified at 16-cell block granularity — every island-carrying waterDepth block now dry; frozen units stood on that band; island-zone collision snap; versioned lobby name) |
 | Frost Crater / Ashen Basin (3v3) | `_frost_crater_3v3.scd` / `_ashen_basin_3v3.scd` | — | good (re-skins) |
 | Crucible / Crossfire Atoll / The Maw | `_*_by_chris.scd` | — | user-made, untouched |
 
