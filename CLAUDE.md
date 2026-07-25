@@ -40,7 +40,7 @@ differ from the user-facing versions in `READ ME - Install.txt` (that file wins)
 | Map (lobby name) | File | Map id | Status |
 |---|---|---|---|
 | [6] Dune Rift (3v3, FFA) v4 | `_dune_rift_3v3.scd` | `SC2_DUNE6` | good (23 Jul mesh sink-sync + first collision snap) |
-| [6] Dune Rift - Two Bridges (3v3) v6 | `_dune_rift_bridge2.scd` | `SC2_DUNEB2` | good (user-confirmed 23 Jul: "a lot better") |
+| [6] Dune Rift - Two Bridges (3v3) v9 | `_dune_rift_bridge2.scd` | `SC2_DUNEB2` | released 25 Jul (nav repair + hover water fixes + oasis honesty); the LOBBY NAME carries the version — bump it every build |
 | [4] Dune Rift (2v2) v3 | `_dune_rift_2v2.scd` | — | good (23 Jul sync); still lacks the 3v3 mass-pad/ramp fixes |
 | [4] Treallach Strait (2v2) | `_treallach_strait.scd` | `SC2_TRST01` | good |
 | [8] Iskellian Extended (4v4) v5 | `_iskellian_ext8.scd` | `SC2_ISKEX3` | good (user-confirmed; islands 2.5×, 6 masses each) |
@@ -112,10 +112,12 @@ prior installed maps, verifies, installs):
 
 ## Open next steps
 
-- **Two Bridges v9 nav repair: awaiting play-test confirmation (24 Jul)**.
-  Installed locally, NOT yet released to Drive. If confirmed, release as
-  user-facing v7 and port the same repair pass to the 3v3 and 2v2 (their
-  bakes carry the same 255 noise on flat ground).
+- **Port the full v12 nav stack to the 3v3 and 2v2**: nav noise repair,
+  hover-land unify, stock water-layer opening, shore ribbon, pocket revert,
+  and the dried-oasis honesty fix (the same fake-dry gully exists on both —
+  the commander-reroute trap is live there). Scripts: `_build_dunerift_
+  bridges_v12.py` has every pass; an in-place `_fix_*` port like
+  `_fix_dunerift_meshsync.py` is the pattern.
 - **Turret no-fire (dormant)**: user could NOT replicate on 24 Jul after the
   v8/collision work. Collision surface + waterDepth + LOS all measured clean
   (stock tolerates far worse collision overhang than we ship). If it recurs,
