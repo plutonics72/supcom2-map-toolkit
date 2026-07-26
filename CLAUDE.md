@@ -118,12 +118,19 @@ prior installed maps, verifies, installs):
   the commander-reroute trap is live there). Scripts: `_build_dunerift_
   bridges_v12.py` has every pass; an in-place `_fix_*` port like
   `_fix_dunerift_meshsync.py` is the pattern.
-- **Turret no-fire (dormant)**: user could NOT replicate on 24 Jul after the
-  v8/collision work. Collision surface + waterDepth + LOS all measured clean
-  (stock tolerates far worse collision overhang than we ship). If it recurs,
-  get: turret type (tooltip), tracking-vs-idle, and target position. Ruled
-  out: stale collision, waterDepth misclassification, phantom triangle
-  overhang (stock baseline comparison in the 24 Jul session).
+- **Turret "not hitting" — RESOLVED as game mechanics, not map data (26 Jul)**.
+  78s combat video, frame-by-frame forensics (3 overlapping analysts): the
+  turrets FIRE; their shells travel and expire mid-air at the same point every
+  salvo — the ordered targets sat ~2x beyond the turrets' real weapon range
+  (manual attack orders are accepted with no range feedback at strategic
+  zoom). Meanwhile enemy rocket artillery legitimately outranges defense
+  turrets map-wide, and ground turrets on BOTH sides cannot engage aircraft
+  (the user's bomber loitered 25s inside the enemy perimeter untouched and
+  did all the actual damage). Earlier "turrets don't fire from the east bank"
+  report was almost certainly the same asymmetry. Nothing in the five-file
+  stack can or should change weapon blueprints. Genuine-bug tripwire if it
+  recurs: a turret holding fire against a GROUND unit standing INSIDE its
+  displayed range ring — that clip would reopen the case.
 - **Dune Rift 2v2**: port the 3v3 v3 fixes (54 mass pads, basin ramps) — same
   script pattern, different file. Low risk, user-visible win.
 - **Boras Naval Test Range (MP_305)**: the best untouched canvas — 6-player
