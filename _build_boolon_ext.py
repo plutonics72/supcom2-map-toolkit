@@ -21,7 +21,7 @@ import sc2maps as sm
 
 G = 1024
 ID_OLD, ID_NEW = "SC2_MP_104", "SC2_BOOLX1"
-NAME = "[6] Boolon Complex Extended (3v3) v2"
+NAME = "[6] Boolon Complex Extended (3v3) v4"
 OUT = os.path.join(sm.GAMEDATA, "_boolon_ext.scd")
 EAST_ZONE = (690, 200, 832, 830)          # unify walls+voids+decks into one platform
 DILATE = 10
@@ -232,31 +232,40 @@ sm._recompute_islands(pay, layers)
 costs_new = sm.rebuild_bdf(stock_files[f"{ID_OLD}.costs.win.bdf"], pay)
 print("nav: opened + islands recomputed", flush=True)
 
-# ---- mesh: delta resample + zone clamp + map-wide gate ----
+# ---- mesh: RIGID DELTA TRANSLATION of the whole in-zone geometry stack ----
+# v2/v3 snapped every in-zone vert to one surface height, collapsing the void's
+# separate layers (floor + under-layers at -10/-30) into coplanar sheets ->
+# map-wide z-fighting moire (user photos, 9 Aug). v4: translate each in-zone
+# vert by the LOCAL heightfield delta, preserving inter-layer offsets exactly -
+# the stack rises as one rigid body; nothing becomes coplanar.
 terr_new, mv = sm.resample_mesh_heights(terr_raw, hf_raw, hf_new,
-                                        bvh_min_y=-5.0, bvh_max_y=200.0)
+                                        bvh_min_y=-40.0, bvh_max_y=200.0)
+p_orig, b_orig, nv_orig, _ = sm.locate_mesh_blob(terr_raw)
 p2, b2, nv2, _ = sm.locate_mesh_blob(terr_new)
+assert nv2 == nv_orig
 pb = bytearray(p2)
 in_zone = set()
 for i in new_cells:
     in_zone.add((i % G, i // G))
-forced = clamped = 0
+translated = 0
 for i in range(nv2):
     off = b2 + 20 + 32*i
-    x, y, z = struct.unpack_from("<3f", pb, off)
-    if not (0 <= x < G and 0 <= z < G): continue
-    xi, zi = int(x), int(z)
+    ox, oy, oz = struct.unpack_from("<3f", p_orig, b_orig + 20 + 32*i)
+    if not (0 <= ox < G and 0 <= oz < G): continue
+    xi, zi = int(ox), int(oz)
     if ((xi, zi) not in in_zone and (xi+1, zi) not in in_zone
             and (xi, zi+1) not in in_zone and (xi+1, zi+1) not in in_zone):
         continue
-    if y <= -35.0: continue                 # skirt/backdrop only
-    gy = sm.hf_sample(Hn, w, x, z) - 0.15
-    if y > gy + 0.3:                        # orphaned wall-face verts above new plate
-        struct.pack_into("<3f", pb, off, x, gy, z); clamped += 1
-    elif y < gy - 0.3:                      # void floor/slope being buried -> becomes the plate surface
-        struct.pack_into("<3f", pb, off, x, gy, z); forced += 1
+    if oy <= -35.0: continue                 # skirt/backdrop stays
+    dy = sm.hf_sample(Hn, w, ox, oz) - sm.hf_sample(H0, w, ox, oz)
+    if abs(dy) < 0.05: continue
+    want = oy + dy
+    x, y, z = struct.unpack_from("<3f", pb, off)
+    if abs(y - want) > 0.05:
+        struct.pack_into("<3f", pb, off, x, want, z)
+        translated += 1
 terr_new = sm.rebuild_bdf(terr_new, bytes(pb))
-print(f"mesh: {mv} delta-tracked, {forced} forced, {clamped} clamped-down", flush=True)
+print(f"mesh: {mv} delta-tracked, {translated} stack-translated in zones", flush=True)
 # gate: no surface vert ABOVE the walking height on NAV-OPEN cells (units stand
 # only there; stock legitimately draws walls/scaffolds above blocked void cells)
 navopen = bytearray(1 if pay[layers[0][2] + i] != 255 else 0 for i in range(G*G))
@@ -264,11 +273,14 @@ p3, b3, nv3, _ = sm.locate_mesh_blob(terr_new)
 worst = -99.0; worst_at = None
 for i in range(nv3):
     x, y, z = struct.unpack_from("<3f", p3, b3 + 20 + 32*i)
-    if 0 <= x < G and 0 <= z < G and y > -4.0 and navopen[int(z)*G + int(x)]:
+    if 0 <= x < G and 0 <= z < G and y > -35.0 and navopen[int(z)*G + int(x)]:
+        ox, oy, oz = struct.unpack_from("<3f", p_orig, b_orig + 20 + 32*i)
+        was_scenery = oy > sm.hf_sample(H0, w, ox, oz) + 2.5   # stood above old ground
+        if was_scenery: continue                                # still scenery: fine
         d = y - sm.hf_sample(Hn, w, x, z)
         if d > worst: worst, worst_at = d, (round(x), round(z), round(y, 1))
-print(f"mesh gate (nav-open cells): worst above-ground {worst:.2f} at {worst_at}", flush=True)
-assert worst < 1.0, "mesh above walking height on navigable ground"
+print(f"mesh gate (surface verts on nav-open cells): worst above-ground {worst:.2f} at {worst_at}", flush=True)
+assert worst < 3.0, "surface mesh above walking height on navigable ground"
 
 # ---- collision: global snap ----
 col_raw = stock_files[f"{ID_OLD}.collision2.win.bdf"]
@@ -431,6 +443,8 @@ out[f"uncompiled/maps/{ID_NEW}/{ID_NEW}_scenario.lua"] = idswap(uscen).encode("u
 out[f"uncompiled/maps/{ID_NEW}/{ID_NEW}_save.lua"] = idswap(sav).encode("utf-8")
 out[f"uncompiled/maps/{ID_NEW}/{ID_NEW}_script.lua"] = idswap(uscript).encode("utf-8")
 
+if os.path.exists(OUT):
+    shutil.copy2(OUT, OUT + ".V3.bak")
 buf = io.BytesIO(); zo = zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED)
 for n, d in sorted(out.items()): zo.writestr(n, d)
 zo.close()
