@@ -178,7 +178,13 @@ prior installed maps, verifies, installs):
   watered base shipped so far). Full five-file pipeline applies.
 - **Cosmetics not cracked** (accepted gaps): baked per-vertex normals (raised
   ground keeps old shading), per-region texture painting (re-skins are
-  whole-set), skybox/environment, water on born-dry maps.
+  whole-set), skybox/environment, water on born-dry maps. NEW (9 Aug evening):
+  the 20B packed vertex appearance attrs are POSITION-DEPENDENT and near-unique
+  per vert (4,302 distinct on MP_104's decks, modal share 2) — nearest-donor
+  transplant renders as map-wide zebra striping (v5, user photos); a single
+  fixed attr (v6) is the only remaining variant. If v6 also fails, born-dry
+  void CANNOT be made to render as ground — extend such maps via a REAL
+  terrain donor instead (the Boolon Harbor pattern).
 - **Engine quirk to remember**: SC2's pathfinder gives up on very long
   cross-map orders (units stall mid-route; staged waypoints work). Not our bug,
   but it colors play-test reports.
