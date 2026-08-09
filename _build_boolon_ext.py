@@ -21,7 +21,7 @@ import sc2maps as sm
 
 G = 1024
 ID_OLD, ID_NEW = "SC2_MP_104", "SC2_BOOLX1"
-NAME = "[6] Boolon Complex Extended (3v3) v5"
+NAME = "[6] Boolon Complex Extended (3v3) v6"
 OUT = os.path.join(sm.GAMEDATA, "_boolon_ext.scd")
 EAST_ZONE = (690, 200, 832, 830)          # unify walls+voids+decks into one platform
 DILATE = 10
@@ -110,6 +110,7 @@ for z in range(ez0, ez1+1):
         if not deck[i]:
             new_cells.add(i)
 # 2) dilation everywhere (density-gated)
+cells_east = set(new_cells)          # step-1 east plates (attr-transplant scope)
 for i in range(G*G):
     if not deck[i] and i not in new_cells and 1 <= dist_deck[i] <= DILATE:
         x, z = i % G, i // G
@@ -142,8 +143,10 @@ for zc in range(hull[1], hull[3], 4):
             if dense_frac > 0.7:
                 fills.append(comp)
 fills.sort(key=len, reverse=True)
-for comp in fills[:4]:
-    new_cells.update(comp)
+attr_zone = set(cells_east)          # east plates + interior fills get the uniform
+for comp in fills[:4]:               # slab attr; map-wide dilation rims keep their
+    new_cells.update(comp)           # original look (v5 transplanted them too ->
+    attr_zone.update(comp)           # zebra-striping on every deck rim, user photos)
 print(f"new cells: east+dilate+{len(fills[:4])} fills = {len(new_cells)}", flush=True)
 
 # ---- hfield edits: plate heights + relaxation ----
@@ -297,30 +300,42 @@ def nearest_attr(x, z):
                     if d < bd: bd, best = d, attr
         if best is not None and r_ >= 1: break
     return best
+# v6: v5's nearest-donor transplant produced map-wide zebra striping (user photos
+# 9 Aug evening) - the 20B attrs are position-dependent (baked UVs/normals) and
+# cannot be copied between locations vert-by-vert. Fallback per plan: ONE fixed
+# donor attr (the modal deck-surface attr) for a uniform slab look, applied ONLY
+# to the east plates + interior fills (attr_zone), never the map-wide dilation
+# rims (their v5 transplant is what garbled every original deck edge).
+attr_counts = Counter()
+for lst in donors.values():
+    for (_, _, a) in lst:
+        attr_counts[a] += 1
+FIXED_ATTR = attr_counts.most_common(1)[0][0]
+print(f"fixed donor attr chosen from {len(attr_counts)} distinct deck attrs "
+      f"(modal share {attr_counts.most_common(1)[0][1]})", flush=True)
+in_attr = set()
+for i in attr_zone:
+    in_attr.add((i % G, i // G))
 pos_before = bytes(b"".join(pb[b2 + 20 + 32*i : b2 + 20 + 32*i + 12] for i in range(nv2)))
-recolored = 0; skipped_no_donor = 0; changed_sample = 0
+recolored = 0; changed_sample = 0
 for i in range(nv2):
     off = b2 + 20 + 32*i
     ox, oy, oz = struct.unpack_from("<3f", p_orig, b_orig + 20 + 32*i)
     if not (0 <= ox < G and 0 <= oz < G): continue
     xi, zi = int(ox), int(oz)
-    if ((xi, zi) not in in_zone and (xi+1, zi) not in in_zone
-            and (xi, zi+1) not in in_zone and (xi+1, zi+1) not in in_zone):
+    if ((xi, zi) not in in_attr and (xi+1, zi) not in in_attr
+            and (xi, zi+1) not in in_attr and (xi+1, zi+1) not in in_attr):
         continue
     if oy <= -35.0: continue                              # skirt/backdrop
     if oy > sm.hf_sample(H0, w, ox, oz) + 2.5: continue   # scenery keeps its look
     x, y, z = struct.unpack_from("<3f", pb, off)
     if abs(y - sm.hf_sample(Hn, w, x, z)) < 3.0:          # walking-surface band
-        attr = nearest_attr(x, z)
-        if attr:
-            if attr != bytes(p_orig[b_orig + 20 + 32*i + 12 : b_orig + 20 + 32*i + 32]):
-                changed_sample += 1
-            pb[off+12:off+32] = attr
-            recolored += 1
-        else:
-            skipped_no_donor += 1
-print(f"appearance: {recolored} plate verts re-attributed "
-      f"({changed_sample} actually changed), {skipped_no_donor} no-donor skips", flush=True)
+        if FIXED_ATTR != bytes(p_orig[b_orig + 20 + 32*i + 12 : b_orig + 20 + 32*i + 32]):
+            changed_sample += 1
+        pb[off+12:off+32] = FIXED_ATTR
+        recolored += 1
+print(f"appearance: {recolored} east/fill verts set to the uniform slab attr "
+      f"({changed_sample} actually changed)", flush=True)
 # transplant gates: positions untouched, transplant actually happened and changed bytes
 pos_after = bytes(b"".join(pb[b2 + 20 + 32*i : b2 + 20 + 32*i + 12] for i in range(nv2)))
 assert pos_before == pos_after, "transplant modified vertex positions"
