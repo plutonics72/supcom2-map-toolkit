@@ -21,7 +21,7 @@ import sc2maps as sm
 
 G = 1024
 ID_OLD, ID_NEW = "SC2_MP_104", "SC2_BOOLX1"
-NAME = "[6] Boolon Complex Extended (3v3)"
+NAME = "[6] Boolon Complex Extended (3v3) v2"
 OUT = os.path.join(sm.GAMEDATA, "_boolon_ext.scd")
 EAST_ZONE = (690, 200, 832, 830)          # unify walls+voids+decks into one platform
 DILATE = 10
@@ -85,7 +85,7 @@ for i in range(G*G):
 while q:
     i = q.popleft()
     d = dist_deck[i]
-    if d >= 120: continue
+    if d >= 220: continue
     x, z = i % G, i // G
     for dx, dz in ((1,0),(-1,0),(0,1),(0,-1)):
         nx, nz = x+dx, z+dz
@@ -98,11 +98,12 @@ while q:
 
 new_cells = set()
 ex0, ez0, ex1, ez1 = EAST_ZONE
-# 1) east unification: every in-zone cell within 40 of a deck becomes plate
+# 1) east unification: EVERY non-deck cell in the zone becomes plate (v2: the
+# 40-cell cap left the big east box void - the user saw no difference)
 for z in range(ez0, ez1+1):
     for x in range(ex0, ex1+1):
         i = z*G + x
-        if not deck[i] and dist_deck[i] <= 40:
+        if not deck[i]:
             new_cells.add(i)
 # 2) dilation everywhere (density-gated)
 for i in range(G*G):
@@ -248,11 +249,11 @@ for i in range(nv2):
     if ((xi, zi) not in in_zone and (xi+1, zi) not in in_zone
             and (xi, zi+1) not in in_zone and (xi+1, zi+1) not in in_zone):
         continue
-    if y < -4.0: continue
+    if y <= -35.0: continue                 # skirt/backdrop only
     gy = sm.hf_sample(Hn, w, x, z) - 0.15
     if y > gy + 0.3:                        # orphaned wall-face verts above new plate
         struct.pack_into("<3f", pb, off, x, gy, z); clamped += 1
-    elif abs(y - gy) > 0.3 and y > gy - 8.0:
+    elif y < gy - 0.3:                      # void floor/slope being buried -> becomes the plate surface
         struct.pack_into("<3f", pb, off, x, gy, z); forced += 1
 terr_new = sm.rebuild_bdf(terr_new, bytes(pb))
 print(f"mesh: {mv} delta-tracked, {forced} forced, {clamped} clamped-down", flush=True)
@@ -302,6 +303,52 @@ for bz in range(mh // 4):
             if bytes(mmd[off:off+8]) != plate_block:
                 mmd[off:off+8] = plate_block; painted += 1
 print(f"minimap: {painted} blocks painted", flush=True)
+
+# ---- preview images: top-down from the painted minimap (stock ships angled
+# beauty shots that would show NO change; the lobby uses these, not the minimap) ----
+def dxt1_decode(d, tw, th):
+    px = bytearray(tw * th * 3)
+    for bz in range(th // 4):
+        for bx in range(tw // 4):
+            off = 128 + (bz * (tw//4) + bx) * 8
+            c0, c1 = struct.unpack_from("<HH", d, off)
+            bits = struct.unpack_from("<I", d, off+4)[0]
+            def rgb(c):
+                return (((c >> 11) & 31) * 255 // 31, ((c >> 5) & 63) * 255 // 63, (c & 31) * 255 // 31)
+            p0, p1 = rgb(c0), rgb(c1)
+            if c0 > c1:
+                pal = [p0, p1, tuple((2*a+b)//3 for a, b in zip(p0, p1)),
+                       tuple((a+2*b)//3 for a, b in zip(p0, p1))]
+            else:
+                pal = [p0, p1, tuple((a+b)//2 for a, b in zip(p0, p1)), (0, 0, 0)]
+            for py in range(4):
+                for pxi in range(4):
+                    r, g, b = pal[(bits >> (2*(py*4+pxi))) & 3]
+                    o2 = ((bz*4+py) * tw + bx*4+pxi) * 3
+                    px[o2:o2+3] = bytes((r, g, b))
+    return px
+mm_rgb = dxt1_decode(mmd, mw, mh)
+def make_preview(stock_img):
+    ih = struct.unpack_from("<I", stock_img, 12)[0]
+    iw = struct.unpack_from("<I", stock_img, 16)[0]
+    out_img = bytearray(stock_img[:128]) + bytearray(iw * ih * 4)
+    side = ih                                   # square top-down, letterboxed
+    x_off = (iw - side) // 2
+    for py in range(ih):
+        for pxi in range(iw):
+            o2 = 128 + (py * iw + pxi) * 4
+            if x_off <= pxi < x_off + side:
+                sx = (pxi - x_off) * mw // side
+                sz = py * mh // side
+                so = (sz * mw + sx) * 3
+                r, g, b = mm_rgb[so], mm_rgb[so+1], mm_rgb[so+2]
+            else:
+                r = g = b = 12
+            out_img[o2:o2+4] = bytes((b, g, r, 255))    # BGRA
+    return bytes(out_img)
+stock_files[f"{ID_OLD}_PC_mapshot.dds"] = make_preview(stock_files[f"{ID_OLD}_PC_mapshot.dds"])
+stock_files[f"{ID_OLD}_ui_mapimage.dds"] = make_preview(stock_files[f"{ID_OLD}_ui_mapimage.dds"])
+print("preview images regenerated from minimap", flush=True)
 
 # ---- verification: erosion routes ----
 m0 = bytearray(1 if pay[layers[0][2] + i] != 255 else 0 for i in range(G*G))
