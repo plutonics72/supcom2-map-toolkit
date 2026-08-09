@@ -102,6 +102,10 @@ ex0, ez0, ex1, ez1 = EAST_ZONE
 # 40-cell cap left the big east box void - the user saw no difference)
 for z in range(ez0, ez1+1):
     for x in range(ex0, ex1+1):
+        if x <= 741 and 480 <= z <= 650:
+            continue        # chasm mesh-vertex desert (22/44 tiles have ZERO
+                            # surface verts) - plating it makes INVISIBLE land;
+                            # the decks connect at z~700 (see CLAUDE.md)
         i = z*G + x
         if not deck[i]:
             new_cells.add(i)
@@ -293,7 +297,8 @@ def nearest_attr(x, z):
                     if d < bd: bd, best = d, attr
         if best is not None and r_ >= 1: break
     return best
-recolored = 0
+pos_before = bytes(b"".join(pb[b2 + 20 + 32*i : b2 + 20 + 32*i + 12] for i in range(nv2)))
+recolored = 0; skipped_no_donor = 0; changed_sample = 0
 for i in range(nv2):
     off = b2 + 20 + 32*i
     ox, oy, oz = struct.unpack_from("<3f", p_orig, b_orig + 20 + 32*i)
@@ -308,9 +313,19 @@ for i in range(nv2):
     if abs(y - sm.hf_sample(Hn, w, x, z)) < 3.0:          # walking-surface band
         attr = nearest_attr(x, z)
         if attr:
+            if attr != bytes(p_orig[b_orig + 20 + 32*i + 12 : b_orig + 20 + 32*i + 32]):
+                changed_sample += 1
             pb[off+12:off+32] = attr
             recolored += 1
-print(f"appearance: {recolored} plate verts re-attributed from deck donors", flush=True)
+        else:
+            skipped_no_donor += 1
+print(f"appearance: {recolored} plate verts re-attributed "
+      f"({changed_sample} actually changed), {skipped_no_donor} no-donor skips", flush=True)
+# transplant gates: positions untouched, transplant actually happened and changed bytes
+pos_after = bytes(b"".join(pb[b2 + 20 + 32*i : b2 + 20 + 32*i + 12] for i in range(nv2)))
+assert pos_before == pos_after, "transplant modified vertex positions"
+assert recolored > 1000, "transplant re-attributed suspiciously few verts"
+assert changed_sample > recolored // 4, "transplanted attrs mostly identical to void attrs"
 terr_new = sm.rebuild_bdf(terr_new, bytes(pb))
 print(f"mesh: {mv} delta-tracked, {translated} stack-translated in zones", flush=True)
 # gate: no surface vert ABOVE the walking height on NAV-OPEN cells (units stand

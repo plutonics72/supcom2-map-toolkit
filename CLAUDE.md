@@ -135,22 +135,20 @@ prior installed maps, verifies, installs):
 
 ## Open next steps
 
-- **Boolon Extended v5 — TOP PRIORITY, prepared but NOT run (9 Aug)**. Run
-  `python _build_boolon_ext.py` (game closed), restart SC2, and verify
-  IN-GAME BY DRIVING IT YOURSELF before telling the user anything (their
-  standing instruction). What to look for: the unified east platform
-  (x 690–832) and interior fills should now render as deck ground instead
-  of pale void-mist, at BOTH strategic zoom and close-up. The transplant is
-  an experiment — if plates render badly (noisy patchwork could mean the
-  20B attrs encode absolute UVs), fall back: replace `nearest_attr(x, z)`
-  with one fixed donor attr for a uniform plate look, rebuild, re-verify.
-  If it renders well: Telegram the user screenshots, and on their approval
-  release BOTH Boolon maps to the Drive folder + `READ ME - Install.txt`
-  (size + SHA-256) per the release loop. Context: user photos 9 Aug show
-  their no-go cursor at game (689,662) — one cell west of the fill edge, in
-  the residual chasm. The chasm gap west of the east platform (x 646–741,
-  z 480–650) is a MESH VERTEX DESERT (0–2 verts/16-tile) — do NOT plate it,
-  it will render as an invisible hole; at z≈700 the decks already connect.
+- **Boolon Extended v5 — BUILT + INSTALLED on the laptop (9 Aug), awaiting
+  the user's visual check**. Pre-run adversarial review caught a BLOCKER:
+  the east-unification loop plated 8,186 cells INSIDE the forbidden chasm
+  vertex desert (x≤741, z 480–650 overlap of EAST_ZONE) — a guard now skips
+  it, and the transplant gained gates (positions byte-asserted untouched;
+  recolored>1000; attrs actually changed). Run results: 131,931 new cells,
+  9,392 verts re-attributed (9,186 changed, 0 no-donor skips), all r=3/r=5
+  routes + east platform OK. In-game self-verification NOT possible on this
+  machine (user declines screen access — do not re-request); the user checks
+  visually instead: east platform x 690–832 should render as deck ground,
+  not pale mist, at both zooms. Fallback if patchwork-noisy: single fixed
+  donor attr (see nearest_attr note). On approval: release BOTH Boolon maps
+  per the release loop. NOTE: on this machine the game may never have had
+  the map before — fresh lobby entry "[6] Boolon Complex Extended (3v3) v5".
 - **Boolon Harbor v4 — awaiting user play-test**. Installed on the old
   machine only. If the user approves, rebuild/install on request and release
   to Drive alongside Extended.
