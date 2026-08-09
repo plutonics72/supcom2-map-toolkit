@@ -21,7 +21,7 @@ import sc2maps as sm
 
 G = 1024
 ID_OLD, ID_NEW = "SC2_MP_104", "SC2_BOOLX1"
-NAME = "[6] Boolon Complex Extended (3v3) v4"
+NAME = "[6] Boolon Complex Extended (3v3) v5"
 OUT = os.path.join(sm.GAMEDATA, "_boolon_ext.scd")
 EAST_ZONE = (690, 200, 832, 830)          # unify walls+voids+decks into one platform
 DILATE = 10
@@ -264,6 +264,53 @@ for i in range(nv2):
     if abs(y - want) > 0.05:
         struct.pack_into("<3f", pb, off, x, want, z)
         translated += 1
+# ---- APPEARANCE: plates inherit the void's baked vertex attrs and render as the
+# old pale-mist abyss -> "invisible land" (user could not see any change in-game,
+# 9 Aug photos: cursor probing the chasm one cell west of the fill because nothing
+# LOOKS different). Copy the 20B packed appearance attrs (material/splat/lighting)
+# from the nearest ORIGINAL DECK surface vert onto every translated vert that now
+# sits in the walking-surface band of a new cell, so the whole unified platform
+# renders as deck ground. Positions are NOT touched (bytes 12..32 only) - the v4
+# rigid-stack geometry that killed the moire stays exactly as verified.
+donors = {}
+for i in range(nv_orig):
+    off0 = b_orig + 20 + 32*i
+    dx_, dy_, dz_ = struct.unpack_from("<3f", p_orig, off0)
+    if 0 <= dx_ < G and 0 <= dz_ < G:
+        dxi, dzi = int(dx_), int(dz_)
+        if deck[dzi*G + dxi] and abs(dy_ - sm.hf_sample(H0, w, dx_, dz_)) < 2.5:
+            donors.setdefault((dxi // 32, dzi // 32), []).append(
+                (dx_, dz_, bytes(p_orig[off0+12:off0+32])))
+def nearest_attr(x, z):
+    tx, tz = int(x) // 32, int(z) // 32
+    best = None; bd = 1e18
+    for r_ in range(0, 6):
+        for dz in range(-r_, r_+1):
+            for dx in range(-r_, r_+1):
+                if max(abs(dx), abs(dz)) != r_: continue
+                for (ax, az, attr) in donors.get((tx+dx, tz+dz), ()):
+                    d = (ax-x)**2 + (az-z)**2
+                    if d < bd: bd, best = d, attr
+        if best is not None and r_ >= 1: break
+    return best
+recolored = 0
+for i in range(nv2):
+    off = b2 + 20 + 32*i
+    ox, oy, oz = struct.unpack_from("<3f", p_orig, b_orig + 20 + 32*i)
+    if not (0 <= ox < G and 0 <= oz < G): continue
+    xi, zi = int(ox), int(oz)
+    if ((xi, zi) not in in_zone and (xi+1, zi) not in in_zone
+            and (xi, zi+1) not in in_zone and (xi+1, zi+1) not in in_zone):
+        continue
+    if oy <= -35.0: continue                              # skirt/backdrop
+    if oy > sm.hf_sample(H0, w, ox, oz) + 2.5: continue   # scenery keeps its look
+    x, y, z = struct.unpack_from("<3f", pb, off)
+    if abs(y - sm.hf_sample(Hn, w, x, z)) < 3.0:          # walking-surface band
+        attr = nearest_attr(x, z)
+        if attr:
+            pb[off+12:off+32] = attr
+            recolored += 1
+print(f"appearance: {recolored} plate verts re-attributed from deck donors", flush=True)
 terr_new = sm.rebuild_bdf(terr_new, bytes(pb))
 print(f"mesh: {mv} delta-tracked, {translated} stack-translated in zones", flush=True)
 # gate: no surface vert ABOVE the walking height on NAV-OPEN cells (units stand
@@ -444,7 +491,7 @@ out[f"uncompiled/maps/{ID_NEW}/{ID_NEW}_save.lua"] = idswap(sav).encode("utf-8")
 out[f"uncompiled/maps/{ID_NEW}/{ID_NEW}_script.lua"] = idswap(uscript).encode("utf-8")
 
 if os.path.exists(OUT):
-    shutil.copy2(OUT, OUT + ".V3.bak")
+    shutil.copy2(OUT, OUT + ".V4.bak")
 buf = io.BytesIO(); zo = zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED)
 for n, d in sorted(out.items()): zo.writestr(n, d)
 zo.close()

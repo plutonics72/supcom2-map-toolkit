@@ -32,7 +32,7 @@ build/deploy loop, and open work.
   The Trade-lab repo's bot is **retired for SC2 traffic** — it belongs to the
   user's separate trading work; never send SC2 messages through it.
 
-## Current shipped state (23 Jul 2026)
+## Current shipped state (9 Aug 2026)
 
 All maps live in the Drive folder with hashes; internal build-script versions
 differ from the user-facing versions in `READ ME - Install.txt` (that file wins).
@@ -46,6 +46,8 @@ differ from the user-facing versions in `READ ME - Install.txt` (that file wins)
 | [8] Iskellian Extended (4v4) v6 | `_iskellian_ext8.scd` | `SC2_ISKEX3` | released 25 Jul (ships-ashore fixed: island shorelines were water-classified at 16-cell block granularity — every island-carrying waterDepth block now dry; frozen units stood on that band; island-zone collision snap; versioned lobby name) |
 | Frost Crater / Ashen Basin (3v3) | `_frost_crater_3v3.scd` / `_ashen_basin_3v3.scd` | — | good (re-skins) |
 | Crucible / Crossfire Atoll / The Maw | `_*_by_chris.scd` | — | user-made, untouched |
+| [6] Boolon Complex Extended (3v3) v4 | `_boolon_ext.scd` | `SC2_BOOLX1` | installed LOCALLY only (old machine, 9 Aug) — NOT on Drive; user still reports "no change" in-game; **v5 fix prepared, NOT yet run** (see next steps) |
+| [6] Boolon Harbor (3v3) v4 | `_boolon_harbor.scd` | `SC2_BOOLW1` | installed LOCALLY only (old machine, 9 Aug) — NOT on Drive; in-game self-verified (real sea, deck platforms); awaiting user play-test verdict |
 
 Latest-generation build scripts (each is self-contained, reads the game files +
 prior installed maps, verifies, installs):
@@ -75,6 +77,27 @@ prior installed maps, verifies, installs):
   guards, stock-style layer treatment, waterDepth regen (decode-verified dry
   block; asserts water blocks stay byte-identical to stock), mass pads + inland
   placement, minimap island painting.
+- `_build_boolon_ext.py` — Boolon Complex Extended (`SC2_BOOLX1` on stock
+  `SC2_MP_104`, a born-dry deck-over-void map). East zone (690,200,832,830)
+  unified into one platform + 10-cell dilation + 4 interior void fills
+  (138k new cells), Laplacian relaxation, 6 new masses, minimap/preview
+  regeneration. v4 mesh = RIGID-STACK translation (translate every in-zone
+  vert by the local hfield delta, preserving inter-layer offsets — v2/v3
+  collapsed the void's stacked layers to one plane and caused map-wide
+  z-fighting moiré). Script currently at **v5, prepared but NOT RUN**: adds
+  the appearance-attr transplant (copy 20B packed vertex attrs, bytes 12..32
+  of the 32B stride, from nearest original deck-surface donor verts onto
+  translated verts in the walking-surface band of new cells). Rationale: new
+  ground inherits the void's baked attrs and renders as pale abyss-mist —
+  functionally walkable but INVISIBLE as land; the user's "no change from
+  standard" cursor probe mapped to game (689,662), ONE CELL west of the fill
+  edge. The transplant was tried once as v3 but never visually isolated
+  (v3 also carried the moiré bug); v5 = v4's verified geometry + transplant
+  only, positions untouched.
+- `_build_boolon_mirror.py` — Boolon Harbor (`SC2_BOOLW1`): Boolon's deck
+  layout as flat platforms (y=66) on the Treallach (`SC2_MP_302`, WL=56)
+  watered donor; full five-file pipeline incl. `write_waterdepth_dds_mips`;
+  in-game verified 9 Aug (sea renders, cross-deck unit march).
 - Older `_build_*`/`_fix_*` scripts are kept as history — each docstring records
   the bug its successor fixed. Prefer copying the newest as a starting point.
 
@@ -112,6 +135,25 @@ prior installed maps, verifies, installs):
 
 ## Open next steps
 
+- **Boolon Extended v5 — TOP PRIORITY, prepared but NOT run (9 Aug)**. Run
+  `python _build_boolon_ext.py` (game closed), restart SC2, and verify
+  IN-GAME BY DRIVING IT YOURSELF before telling the user anything (their
+  standing instruction). What to look for: the unified east platform
+  (x 690–832) and interior fills should now render as deck ground instead
+  of pale void-mist, at BOTH strategic zoom and close-up. The transplant is
+  an experiment — if plates render badly (noisy patchwork could mean the
+  20B attrs encode absolute UVs), fall back: replace `nearest_attr(x, z)`
+  with one fixed donor attr for a uniform plate look, rebuild, re-verify.
+  If it renders well: Telegram the user screenshots, and on their approval
+  release BOTH Boolon maps to the Drive folder + `READ ME - Install.txt`
+  (size + SHA-256) per the release loop. Context: user photos 9 Aug show
+  their no-go cursor at game (689,662) — one cell west of the fill edge, in
+  the residual chasm. The chasm gap west of the east platform (x 646–741,
+  z 480–650) is a MESH VERTEX DESERT (0–2 verts/16-tile) — do NOT plate it,
+  it will render as an invisible hole; at z≈700 the decks already connect.
+- **Boolon Harbor v4 — awaiting user play-test**. Installed on the old
+  machine only. If the user approves, rebuild/install on request and release
+  to Drive alongside Extended.
 - **Port the full v12 nav stack to the 3v3 and 2v2**: nav noise repair,
   hover-land unify, stock water-layer opening, shore ribbon, pocket revert,
   and the dried-oasis honesty fix (the same fake-dry gully exists on both —
