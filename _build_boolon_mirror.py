@@ -1,26 +1,28 @@
-"""Boolon Harbor (SC2_BOOLW1): Boolon's platform layout on REAL WATER (donor Boras).
+"""Boolon Harbor (SC2_BOOLW1): Boolon's platform layout on REAL WATER.
 
-Part 2 of the Boolon plan: the void becomes sea. Donor SC2_MP_305 (Boras Naval
-Test Range) won the survey: 74% of Boolon's deck footprint lies on well-tessellated
-donor mesh; WL=237; 5 layers + waterDepth + water sheet.
+Donor is TREALLACH (SC2_MP_302, WL=56 - proven by the Strait build); the old
+docstring described the abandoned Boras/MP_305 variant. v5 (10 Aug, laptop):
+review hardenings + the Dune Rift refinement pair.
 
-Recipe:
-- hfield: Boolon nav-mask cells ("decks", incl. walkway strips) -> flat 247 (WL+10);
-  everything else -> min(donor, 217) (WL-20 navigable sea; donor deeps keep depth).
-- mesh: deck cells FLATTEN-snap the donor surface band to the plate (donor relief
-  must not poke through); sea cells rigid-translate by local delta (v4 lesson);
-  skip the water sheet (|y-237|<1.2) and skirt (y<5).
+Recipe (v5):
+- hfield: Boolon deck mask (dilated +2) -> flat 66 (WL+10); everything else ->
+  min(donor, 41) (WL-15 navigable sea; donor deeps keep depth). NEW: two graded
+  HOVER LANDING RAMPS (west + east deck edges, 13 wide, 1.0/cell down through
+  the waterline) - designated amphib entry/exit points.
+- mesh: deck cells flatten-snap the donor surface band to the plate; sea cells
+  rigid-translate by local delta; skip water sheet (|y-56|<1.0) and skirt (y<5).
 - collision: global snap to new hfield.
-- nav: land pair = decks only; amphib triple = open everywhere (stock semantics;
-  sub/ship depth gating comes from waterDepth at runtime).
-- waterDepth: decks -> decode-verified dry block; sea -> donor water block sampled
-  by nearest depth (stock water alphas are heterogeneous; sampling sidesteps it).
-  Path retargeted SC2_MP_305 -> SC2_BOOLW1 (10==10); shipped under both names.
-- props: ALL sunk (donor trees/rocks would float over new sea / poke decks).
-- luas: Boolon's scenario/save/script under the new id; every marker y -> 247.
-- minimap synthetic (sea/deck blocks) + previews regenerated from it.
-Gates: land erosion r=3/r=5 all-spawn routes, naval pool connectivity report,
-deck-surface mesh gate, collision gate, marker placement.
+- nav: land pair = decks only; amphib triple = open everywhere EXCEPT a
+  density-gated wet-aware anti-boarding wall on big-deck rim cells (Dune Rift
+  v11 lesson: hover must not climb sheer faces; walkways exempt via local deck
+  density so hover traffic still crosses them; ramps are the landings).
+- waterDepth: footprint-aware (Iskellian lesson: any block carrying deck+4
+  dilation is DRY) and height-aware (dry ramp tops classify dry).
+- props all sunk; luas = Boolon layout, marker y -> 66; minimap synthetic +
+  previews regenerated.
+Gates: erosion routes r=3 (r=5 advisory), deck mesh gate, marker-on-deck,
+deck-block wd decode, amph sea<->deck island unity via ramps, hover walkway
+connectivity across all spawns, backup-if-exists before overwrite.
 """
 import zipfile, io, os, re, struct, shutil
 from collections import deque, Counter
@@ -30,7 +32,7 @@ G = 1024
 DONOR = "SC2_MP_302"
 SRC_LAYOUT = "SC2_MP_104"
 ID_NEW = "SC2_BOOLW1"
-NAME = "[6] Boolon Harbor (3v3) v4"
+NAME = "[6] Boolon Harbor (3v3) v5"
 OUT = os.path.join(sm.GAMEDATA, "_boolon_harbor.scd")
 WL = 56.0; WR = int(WL * 128)            # Treallach water level (proven by the Strait build)
 DECK_Y = 66.0; SEA_Y = 41.0
@@ -77,8 +79,43 @@ for z in range(G):
         if Hn[z*w + x] != r:
             Hn[z*w + x] = r
             struct.pack_into("<H", hp, hd + 2*(z*w + x), r)
+# ---- hover landing ramps: two graded beaches at the widest west/east edges ----
+RAMP_HALF = 6; RAMP_LEN = 14
+def find_edge_site(side):
+    best = None
+    for z in range(400, 625):
+        xs = [x for x in range(G) if deck[z*G + x]]
+        if not xs: continue
+        xe = min(xs) if side == "w" else max(xs)
+        inner = 2 if side == "w" else -2
+        deep = 6 if side == "w" else -6
+        if all(0 <= xe + deep < G and deck[zz*G + xe + inner] and deck[zz*G + xe + deep]
+               for zz in range(z - RAMP_HALF, z + RAMP_HALF + 1)):
+            key = xe if side == "w" else -xe
+            if best is None or key < best[0]:
+                best = (key, xe, z)
+    return best
+ramp_cells = set()
+for side in ("w", "e"):
+    site = find_edge_site(side)
+    assert site, f"no solid deck edge for ramp on side {side}"
+    _, xe, zc = site
+    dirn = -1 if side == "w" else 1
+    for d in range(1, RAMP_LEN + 1):
+        x = xe + dirn * d
+        if not (0 <= x < G): break
+        tgt_r = int((DECK_Y - 1.0 * d) * 128)
+        for z in range(zc - RAMP_HALF, zc + RAMP_HALF + 1):
+            i = z*G + x
+            if deck[i]: continue
+            if Hn[z*w + x] < tgt_r:
+                Hn[z*w + x] = tgt_r
+                struct.pack_into("<H", hp, hd + 2*(z*w + x), tgt_r)
+            ramp_cells.add(i)
+    print(f"ramp {side}: deck edge x={xe} z={zc}, {RAMP_LEN}-cell grade", flush=True)
+
 hf_new = sm.rebuild_bdf(hf_raw, bytes(hp))
-print("hfield: decks flat 247, sea <=217", flush=True)
+print(f"hfield: decks flat {DECK_Y}, sea <={SEA_Y}, {len(ramp_cells)} ramp cells", flush=True)
 
 # ---- mesh ----
 terr_raw = donor[DONOR + ".terrain.win.bdf"]
@@ -100,7 +137,9 @@ for i in range(nv2):
                                                      # (translating them shears - their
                                                      # footprints span different deltas)
     xi, zi = int(ox), int(oz)
-    on_deck = deck[zi*G + xi] or deck[zi*G + min(G-1, xi+1)] or deck[min(G-1, zi+1)*G + xi]
+    on_deck = (deck[zi*G + xi] or deck[zi*G + min(G-1, xi+1)]
+               or deck[min(G-1, zi+1)*G + xi]
+               or deck[min(G-1, zi+1)*G + min(G-1, xi+1)])
     x, y, z = struct.unpack_from("<3f", pb, off)
     want = (DECK_Y - 0.15) if on_deck else (oy + (sm.hf_sample(Hn, w, ox, oz) - oh))
     if abs(y - want) > 0.05:
@@ -140,6 +179,7 @@ for z in range(0, G, 11):
             wet_ref = i                       # deep water INSIDE the baked nav region
         if dry_ref is None and H0[z*w+x] > WR + 15*128:
             dry_ref = i
+assert wet_ref is not None, "no deep baked-nav water sample found on donor"
 land_L = [li for li in range(5) if td.costs_payload[layers[li][2] + wet_ref] == 255]
 amph_L = [li for li in range(5) if li not in land_L]
 print(f"land layers {land_L}, amphib-class {amph_L}", flush=True)
@@ -148,6 +188,30 @@ for i in range(G*G):
         pay[layers[li][2] + i] = 1 if deck[i] else 255
     for li in amph_L:
         pay[layers[li][2] + i] = 1
+# density-gated wet-aware anti-boarding wall (Dune Rift v11): hover must not
+# climb the sheer 10-unit deck faces from water; walkways (low local deck
+# density) stay open so hover traffic crosses them; ramps are the landings
+def near_wet3(x, z):
+    for dz in range(-3, 4):
+        for dx in range(-3, 4):
+            nx, nz = x + dx, z + dz
+            if 0 <= nx < G and 0 <= nz < G and Hn[nz*w + nx] <= WR:
+                return True
+    return False
+walled = 0
+for z in range(3, G-3):
+    for x in range(3, G-3):
+        i = z*G + x
+        if not deck[i] or i in ramp_cells:
+            continue
+        dens_l = sum(deck[(z+dz)*G + x+dx] for dz in (-3, 0, 3) for dx in (-3, 0, 3))
+        if dens_l < 8:
+            continue                      # walkway / narrow strip: leave hover-open
+        if near_wet3(x, z):
+            for li in amph_L:
+                pay[layers[li][2] + i] = 255
+            walled += 1
+print(f"anti-boarding wall: {walled} big-deck rim cells hover-closed", flush=True)
 sm._recompute_islands(pay, layers)
 costs_new = sm.rebuild_bdf(donor[DONOR + ".costs.win.bdf"], pay)
 print("nav rebuilt + islands", flush=True)
@@ -155,9 +219,25 @@ print("nav rebuilt + islands", flush=True)
 # ---- waterDepth: proven full-mip writer (built Treallach Strait) ----
 t_wd = sm.Terrain(DONOR)
 t_wd.set_hfield(hf_new)
+# footprint-aware (Iskellian lesson: block-granular texture -> dilate the deck
+# mask 4 cells so no deck rim texel classifies water) + height-aware (dry ramp
+# tops classify dry; the frozen-units lesson)
+deck_wd = bytearray(deck)
+for _d in range(8):     # block=8 cells, writer samples the CENTER: corner deck
+                        # cells sit Manhattan-7 away, so dilate 8 to cover
+    g2 = bytearray(deck_wd)
+    for z in range(1, G-1):
+        b = z*G
+        for x in range(1, G-1):
+            if not deck_wd[b+x] and (deck_wd[b+x-1] or deck_wd[b+x+1]
+                                     or deck_wd[b-G+x] or deck_wd[b+G+x]):
+                g2[b+x] = 1
+    deck_wd = g2
 def is_water(x, z):
     xi = min(G-1, max(0, int(x))); zi = min(G-1, max(0, int(z)))
-    return not deck[zi*G + xi]
+    if deck_wd[zi*G + xi]:
+        return False
+    return Hn[zi*w + xi] <= WR
 wd = sm.write_waterdepth_dds_mips(t_wd, WL, is_water=is_water)
 wh, ww = struct.unpack_from("<II", wd, 12)
 scale = G // ww
@@ -172,6 +252,14 @@ for lbl, px, pz, want_dry in [("spawn1", 250, 703, True), ("spawn4", 754, 282, T
     am = alpha_mean(wd, (px//scale)//4, (pz//scale)//4)
     print(f"  wd {lbl}: alpha={am}", flush=True)
     assert (am < 40) == want_dry, lbl
+bad_rim = 0
+for i in range(0, G*G, 97):
+    if deck[i]:
+        x, z = i % G, i // G
+        if alpha_mean(wd, (x//scale)//4, (z//scale)//4) >= 40:
+            bad_rim += 1
+print(f"wd deck-cell sample: {bad_rim} water-classified (want 0)", flush=True)
+assert bad_rim == 0, "deck cells still water-classified in waterDepth"
 print("waterDepth rebuilt", flush=True)
 
 # ---- props: sink all ----
@@ -185,6 +273,7 @@ def fix_y(txt):
     return re.sub(r"VECTOR3\(\s*([\d.eE+-]+)\s*,\s*[\d.eE+-]+\s*,\s*([\d.eE+-]+)\s*\)",
                   lambda m: f"VECTOR3( {m.group(1)}, {DECK_Y:.6f}, {m.group(2)} )", txt)
 scen = lua104[f"{SRC_LAYOUT}_scenario.lua"]
+assert "<LOC SC2_MAPNAME_0020>[6] Boolon Complex (3v3)" in scen, "scenario name needle missing"
 scen = scen.replace("<LOC SC2_MAPNAME_0020>[6] Boolon Complex (3v3)", NAME)
 scen = fix_y(scen).replace(SRC_LAYOUT, ID_NEW)
 sav = fix_y(lua104[f"{SRC_LAYOUT}_save.lua"]).replace(SRC_LAYOUT, ID_NEW)
@@ -308,6 +397,29 @@ for i in range(nv3):
         if d > worst: worst, worst_at = d, (round(x), round(z), round(y, 1))
 print(f"deck mesh gate: worst above plate {worst:.2f} at {worst_at}", flush=True)
 allok &= worst < 4.0
+# marker-on-deck gate (every save.lua marker must sit on the deck mask)
+bad_mk = 0
+for a, c in re.findall(r"VECTOR3\(\s*([\d.eE+-]+)\s*,\s*[\d.eE+-]+\s*,\s*([\d.eE+-]+)\s*\)", sav):
+    mx, mzz = int(float(a)), int(float(c))
+    if not (0 <= mx < G and 0 <= mzz < G) or not deck[mzz*G + mx]:
+        bad_mk += 1
+print(f"markers off-deck: {bad_mk} (want 0)", flush=True)
+allok &= bad_mk == 0
+# amph unity: open sea and deck tops share one island (via the landing ramps)
+offB_a = layers[amph_L[0]][4]
+isl_sea = pay[offB_a + 60*G + 512]
+isl_deck = pay[offB_a + SPAWNS[1][1]*G + SPAWNS[1][0]]
+print(f"amph islands: sea={isl_sea} deck={isl_deck} {'OK' if isl_sea == isl_deck else 'FAIL'}", flush=True)
+allok &= isl_sea == isl_deck
+# hover walkway connectivity: amph-open DECK cells alone must connect all spawns
+mh_ = bytearray(1 if (deck[i] and pay[layers[amph_L[0]][2] + i] != 255) else 0 for i in range(G*G))
+sh = snapc(mh_, *SPAWNS[1])
+seen_h = flood(mh_, sh)
+for a2 in range(2, 7):
+    th_ = snapc(mh_, *SPAWNS[a2])
+    okh = th_ is not None and seen_h[th_]
+    print(f"hover deck route spawn1 -> spawn{a2}: {'OK' if okh else 'FAIL'}", flush=True)
+    allok &= okh
 assert allok, "verification failed"
 
 # ---- package ----
@@ -329,6 +441,12 @@ out[f"maps/{ID_NEW}/{ID_NEW}_script.lua"] = script.encode("utf-8")
 out[f"uncompiled/maps/{ID_NEW}/{ID_NEW}_scenario.lua"] = scen.encode("utf-8")
 out[f"uncompiled/maps/{ID_NEW}/{ID_NEW}_save.lua"] = sav.encode("utf-8")
 out[f"uncompiled/maps/{ID_NEW}/{ID_NEW}_script.lua"] = script.encode("utf-8")
+if os.path.exists(OUT):
+    bdir = os.path.join(os.path.dirname(sm.GAMEDATA), "gamedata_backups")
+    os.makedirs(bdir, exist_ok=True)
+    bak = os.path.join(bdir, os.path.basename(OUT) + ".pre_v5.bak")
+    if not os.path.exists(bak):
+        shutil.copy2(OUT, bak)
 buf = io.BytesIO(); zo = zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED)
 for n, d in sorted(out.items()): zo.writestr(n, d)
 zo.close()

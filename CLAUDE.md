@@ -46,8 +46,8 @@ differ from the user-facing versions in `READ ME - Install.txt` (that file wins)
 | [8] Iskellian Extended (4v4) v6 | `_iskellian_ext8.scd` | `SC2_ISKEX3` | released 25 Jul (ships-ashore fixed: island shorelines were water-classified at 16-cell block granularity — every island-carrying waterDepth block now dry; frozen units stood on that band; island-zone collision snap; versioned lobby name) |
 | Frost Crater / Ashen Basin (3v3) | `_frost_crater_3v3.scd` / `_ashen_basin_3v3.scd` | — | good (re-skins) |
 | Crucible / Crossfire Atoll / The Maw | `_*_by_chris.scd` | — | user-made, untouched |
-| [6] Boolon Complex Extended (3v3) v4 | `_boolon_ext.scd` | `SC2_BOOLX1` | installed LOCALLY only (old machine, 9 Aug) — NOT on Drive; user still reports "no change" in-game; **v5 fix prepared, NOT yet run** (see next steps) |
-| [6] Boolon Harbor (3v3) v4 | `_boolon_harbor.scd` | `SC2_BOOLW1` | installed LOCALLY only (old machine, 9 Aug) — NOT on Drive; in-game self-verified (real sea, deck platforms); awaiting user play-test verdict |
+| [6] Boolon Complex Extended (3v3) v6 | `_boolon_ext.scd` | `SC2_BOOLX1` | installed on the LAPTOP (10 Aug) — NOT on Drive. v5 nearest-donor transplant = map-wide zebra (user photos); v6 = uniform slab attr scoped to east+fills, original decks untouched. This is the CEILING for the born-dry class (attr position-dependence proven 3 ways); if the user dislikes the slab, retire Extended in favor of Harbor |
+| [6] Boolon Harbor (3v3) v5 | `_boolon_harbor.scd` | `SC2_BOOLW1` | rebuilt+installed on the LAPTOP (10 Aug), supersedes the old machine's v4 (byte-different; lobby name carries v5) — NOT on Drive. v5 refinements: hover landing ramps W(213,403)/E(783,420), density-gated anti-boarding walls (walkways exempt, gated), footprint+height-aware waterDepth (0 deck cells water-classified, gated), marker/mesh/route/island gates all green. Awaiting user eyes |
 
 Latest-generation build scripts (each is self-contained, reads the game files +
 prior installed maps, verifies, installs):
