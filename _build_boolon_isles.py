@@ -36,7 +36,7 @@ G = 1024
 DONOR = "SC2_MP_302"
 SRC_LAYOUT = "SC2_MP_104"
 ID_NEW = "SC2_BOOLI1"
-NAME = "[6] Boolon Isles (3v3) v2"
+NAME = "[6] Boolon Isles (3v3) v3"
 OUT = os.path.join(sm.GAMEDATA, "_boolon_isles.scd")
 WL = 56.0; WR = int(WL * 128)
 ISLAND_TOP = WL + 9.0
@@ -222,6 +222,12 @@ for pid in sorted(spawn_ids):
     print(f"spawn island P{pid}: {v1_sizes[pid]} -> {got} cells", flush=True)
 got_e = grow_island(east_id, 4 * v1_sizes[east_id], 26)
 print(f"east peninsula P{east_id}: {v1_sizes[east_id]} -> {got_e} cells", flush=True)
+# v3: the r=12 silhouette extraction slimmed the central complex ~12 cells per
+# edge (user: the middle "feels smaller" - measured 83k vs standard Boolon's
+# 95k). Grow the central island back out ~10 cells (guarded) -> ~110k, and the
+# flat arena scales out with the coast automatically.
+got_c = grow_island(big_id, len(islands[big_id]) + 30000, 10)
+print(f"central island P{big_id}: -> {got_c} cells", flush=True)
 
 isl_mask = bytearray(G*G)
 for cells in islands.values():
