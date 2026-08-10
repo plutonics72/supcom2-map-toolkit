@@ -36,7 +36,7 @@ G = 1024
 DONOR = "SC2_MP_302"
 SRC_LAYOUT = "SC2_MP_104"
 ID_NEW = "SC2_BOOLI1"
-NAME = "[6] Boolon Isles (3v3) v7"
+NAME = "[6] Boolon Isles (3v3) v11"
 OUT = os.path.join(sm.GAMEDATA, "_boolon_isles.scd")
 WL = 56.0; WR = int(WL * 128)
 ISLAND_TOP = WL + 9.0
@@ -528,8 +528,13 @@ for i in range(nv2):
     # Ground verts (tracking donor ground) sync like everything else; sheet
     # disks (floating above donor ground) get buried 2 under the arena floor.
     if isl_mask[ii] and abs(oy - WL) < 1.0:
-        x, y, z = struct.unpack_from("<3f", pb, off)
+        # v7 rule, kept verbatim: floating sheet disks (above donor ground)
+        # get buried; everything else near 56 syncs to the floor. A v8/v9
+        # attempt to leave sub-ground geometry unsynced produced coastal glass
+        # sheets in-game (A/B-tested against v7) - do not reintroduce it; the
+        # hoisted horizon-fan apex is invisible and harmless.
         ny = (nh - 2.0) if oy > oh + 2.0 else (nh - 0.15)
+        x, y, z = struct.unpack_from("<3f", pb, off)
         if abs(y - ny) > 0.3:
             struct.pack_into("<3f", pb, off, x, ny, z)
             forced += 1
@@ -547,6 +552,177 @@ for i in range(nv2):
     if abs(y - gy) > 0.3:
         struct.pack_into("<3f", pb, off, x, gy, z)
         forced += 1
+
+# ---- v8: delete flattened donor scenery triangles over the arena ----
+# The crater-rim rocks flushed to floor level still render as dark rock-
+# textured "debris" patches (the raised-looking ring visuals, user photo).
+# Their triangles are pure scenery: degenerate (idx a=b=c) every candidate
+# whose FULL footprint is covered by surviving ground triangles; the rest ARE
+# the floor (donor modeled no ground under some rocks - removing those would
+# expose the water sheet 5.5 below). Indices are RECORD-RELATIVE: record rr's
+# dir entry at payload 20+rr*108, u32[3]=cum vert start, u32[4]=cum index
+# start; record 0 (water sheet + horizon fan) is never touched.
+ni2 = struct.unpack_from("<I", pb, b2 + 12)[0]
+ib2 = b2 + 20 + nv2 * 32
+nrec2 = struct.unpack_from("<I", pb, 4)[0]
+rb = [struct.unpack_from("<27I", pb, 20 + rr * 108) for rr in range(nrec2)]
+rbnd = [(rb[rr][3], rb[rr][4]) for rr in range(nrec2)] + [(nv2, ni2)]
+idxs = list(struct.unpack_from(f"<{ni2}I", pb, ib2))
+vbase_of = [0] * ni2
+rec_of = [0] * ni2
+for rr in range(nrec2):
+    for k in range(rbnd[rr][1], rbnd[rr + 1][1]):
+        vbase_of[k] = rbnd[rr][0]
+        rec_of[k] = rr
+VX = [0.0] * nv2; VY = [0.0] * nv2; VZ = [0.0] * nv2
+DY = [0.0] * nv2
+for i in range(nv2):
+    VX[i], VY[i], VZ[i] = struct.unpack_from("<3f", pb, b2 + 20 + 32*i)
+    DY[i] = struct.unpack_from("<f", p_orig, b_orig + 20 + 32*i + 4)[0]
+# Candidates: collapsed donor scenery ON THE FLAT ARENA only. A v9 attempt to
+# extend this map-wide opened holes at coasts (the strict-surface model cannot
+# tell who the visible surface is on cliff/slope geometry - A/B-tested);
+# coasts keep their draped-but-modest v7 look. ground_d = current y minus
+# local hfield; scenery = never tracked donor ground.
+cand_v = bytearray(nv2)
+ground_d = [0.0] * nv2
+for i in range(nv2):
+    ox2, oz2 = VX[i], VZ[i]
+    if not (0 <= ox2 < G and 0 <= oz2 < G):
+        ground_d[i] = 99.0
+        continue
+    ground_d[i] = VY[i] - sm.hf_sample(Hn, w, ox2, oz2)
+    if abs(sm.hf_sample(Hn, w, ox2, oz2) - ARENA_H) >= 0.3: continue
+    if abs(DY[i] - sm.hf_sample(H0, w, ox2, oz2)) > 2.5:
+        cand_v[i] = 1
+def tri_cells(a, b, c):
+    ax, az, bx, bz, cx2, cz2 = VX[a], VZ[a], VX[b], VZ[b], VX[c], VZ[c]
+    x0, x1 = max(0, math.floor(min(ax, bx, cx2))), min(G-1, math.ceil(max(ax, bx, cx2)))
+    z0, z1 = max(0, math.floor(min(az, bz, cz2))), min(G-1, math.ceil(max(az, bz, cz2)))
+    d = (bz - cz2)*(ax - cx2) + (cx2 - bx)*(az - cz2)
+    if abs(d) < 1e-9 or x1 - x0 > 80 or z1 - z0 > 80: return []
+    cells = []
+    for zc in range(z0, z1 + 1):
+        for xc in range(x0, x1 + 1):
+            X, Z = xc + 0.5, zc + 0.5
+            l1 = ((bz - cz2)*(X - cx2) + (cx2 - bx)*(Z - cz2)) / d
+            l2 = ((cz2 - az)*(X - cx2) + (ax - cx2)*(Z - cz2)) / d
+            if l1 >= -0.05 and l2 >= -0.05 and 1.0 - l1 - l2 >= -0.05:
+                cells.append(zc * G + xc)
+    return cells
+ntri = ni2 // 3
+cand_t = []
+surv_cells = set()
+cand_bbox = [G, -1, G, -1]   # x0,x1,z0,z1
+tri_abs = []
+for t in range(ntri):
+    a = idxs[3*t] + vbase_of[3*t]
+    b = idxs[3*t+1] + vbase_of[3*t+1]
+    c = idxs[3*t+2] + vbase_of[3*t+2]
+    tri_abs.append((a, b, c))
+    # candidate: has scenery verts, and the WHOLE tri is collapsed onto the
+    # surface (max 1.0 above local ground) - standing scenery (outer frame
+    # rocks) is excluded and stays
+    if (rec_of[3*t] != 0 and (cand_v[a] or cand_v[b] or cand_v[c])
+            and max(ground_d[a], ground_d[b], ground_d[c]) < 1.0):
+        span = max(max(VX[a],VX[b],VX[c]) - min(VX[a],VX[b],VX[c]),
+                   max(VZ[a],VZ[b],VZ[c]) - min(VZ[a],VZ[b],VZ[c]))
+        if span <= 64:
+            cand_t.append(t)
+            cand_bbox[0] = min(cand_bbox[0], math.floor(min(VX[a],VX[b],VX[c])))
+            cand_bbox[1] = max(cand_bbox[1], math.ceil(max(VX[a],VX[b],VX[c])))
+            cand_bbox[2] = min(cand_bbox[2], math.floor(min(VZ[a],VZ[b],VZ[c])))
+            cand_bbox[3] = max(cand_bbox[3], math.ceil(max(VZ[a],VZ[b],VZ[c])))
+cand_set = set(cand_t)
+for t in range(ntri):
+    if t in cand_set: continue
+    a, b, c = tri_abs[t]
+    # survivor = non-candidate near-surface arena geometry
+    if rec_of[3*t] == 0: continue
+    if min(VY[a], VY[b], VY[c]) <= ARENA_H - 2.0: continue
+    if max(abs(ground_d[a]), abs(ground_d[b]), abs(ground_d[c])) >= 3.0: continue
+    if (max(VX[a],VX[b],VX[c]) < cand_bbox[0] - 1 or min(VX[a],VX[b],VX[c]) > cand_bbox[1] + 1
+            or max(VZ[a],VZ[b],VZ[c]) < cand_bbox[2] - 1 or min(VZ[a],VZ[b],VZ[c]) > cand_bbox[3] + 1):
+        continue
+    if max(max(VX[a],VX[b],VX[c]) - min(VX[a],VX[b],VX[c]),
+           max(VZ[a],VZ[b],VZ[c]) - min(VZ[a],VZ[b],VZ[c])) > 80:
+        continue
+    surv_cells.update(tri_cells(a, b, c))
+# STRICT per-cell coverage - no dilation. The 1-cell slack let small
+# candidates that WERE the visible surface count as covered via a
+# neighbouring cell (v9 coast holes, A/B-tested).
+surv_cov = surv_cells
+# Greedy floor cover: a KEPT candidate is itself floor, so later candidates
+# covered by survivors + previously-kept ones can be removed too. Decisions
+# are one-shot and kept tris are never revisited - every degenerated tri is
+# covered by geometry that provably stays, so no holes by construction.
+# Order: most-survivor-covered first (they degenerate; the least-covered
+# become the permanent floor early).
+cand_cells = {}
+for t in cand_t:
+    a, b, c = tri_abs[t]
+    cand_cells[t] = tri_cells(a, b, c)
+def cov_frac(t):
+    cells = cand_cells[t]
+    if not cells: return -1.0
+    return sum(1 for i in cells if i in surv_cov) / len(cells)
+order = sorted(cand_t, key=cov_frac, reverse=True)
+deg_n = kept_n = 0
+for t in order:
+    cells = cand_cells[t]
+    if cells and all(i in surv_cov for i in cells):
+        v0 = idxs[3*t]
+        idxs[3*t+1] = v0; idxs[3*t+2] = v0
+        deg_n += 1
+    else:
+        kept_n += 1
+        surv_cov.update(cells)               # permanent floor: extend coverage
+struct.pack_into(f"<{ni2}I", pb, ib2, *idxs)
+print(f"scenery tris over arena: {len(cand_t)} candidates, {deg_n} degenerated, "
+      f"{kept_n} kept as floor", flush=True)
+
+# v11: repaint the KEPT debris verts with a per-record "slab" attr sampled
+# from clean arena ground of the SAME record - attrs blend that record's own
+# material pair, so cross-record copies garble (zebra; Extended v5 lesson)
+# while a single same-record source renders uniform (Extended v6 lesson).
+# Kills the baked dark-rock shading on the floor patches; the pale rim band
+# (true ground) is untouched.
+rec_of_vert = [0] * nv2
+for rr in range(nrec2):
+    for vv in range(rbnd[rr][0], rbnd[rr + 1][0]):
+        rec_of_vert[vv] = rr
+kept_scen = set()
+for t in cand_t:
+    if idxs[3*t] == idxs[3*t+1] == idxs[3*t+2]:
+        continue                                  # degenerated - never drawn
+    for vv in tri_abs[t]:
+        if cand_v[vv]:
+            kept_scen.add(vv)
+src_of_rec = {}
+for rr in range(nrec2):
+    best = None
+    for vv in range(rbnd[rr][0], rbnd[rr + 1][0]):
+        if cand_v[vv]: continue
+        ox2, oz2 = VX[vv], VZ[vv]
+        if not (0 <= ox2 < G and 0 <= oz2 < G): continue
+        if abs(sm.hf_sample(Hn, w, ox2, oz2) - ARENA_H) >= 0.3: continue
+        if abs(DY[vv] - sm.hf_sample(H0, w, ox2, oz2)) > 1.0: continue
+        d2 = (ox2 - 430)**2 + (oz2 - 500)**2      # prefer mid-arena source
+        if best is None or d2 < best[0]:
+            best = (d2, vv)
+    if best is not None:
+        src_of_rec[rr] = best[1]
+slabbed = 0
+for vv in kept_scen:
+    src = src_of_rec.get(rec_of_vert[vv])
+    if src is None: continue
+    so = b2 + 20 + 32*src + 12
+    do = b2 + 20 + 32*vv + 12
+    pb[do:do+20] = pb[so:so+20]
+    slabbed += 1
+print(f"debris verts re-attributed to slab: {slabbed} "
+      f"(source recs: {sorted(src_of_rec)})", flush=True)
+
 terr_new = sm.rebuild_bdf(terr_new, bytes(pb))
 print(f"mesh: {mv} delta-tracked, {forced} forced", flush=True)
 terr_new = sm.retarget_waterdepth_path(terr_new, DONOR, ID_NEW)
@@ -671,46 +847,66 @@ assert "<LOC SC2_MAPNAME_0020>[6] Boolon Complex (3v3)" in scen
 scen = scen.replace("<LOC SC2_MAPNAME_0020>[6] Boolon Complex (3v3)", NAME)
 scen = fix_y_dynamic(scen).replace(SRC_LAYOUT, ID_NEW)
 sav = fix_y_dynamic(lua104[f"{SRC_LAYOUT}_save.lua"]).replace(SRC_LAYOUT, ID_NEW)
+# v8: snap every Mass marker to its LEVELED pad center. The pad pass and the
+# lua pass used different relocation rules - 15/36 markers shipped stranded on
+# unlevelled shoreline cells 1-12 cells off their pad (audit, user report:
+# "many unusable mass points"); the old gate validated the pads, not the
+# shipped markers, so it passed vacuously.
+pad_by_name = {nm_: (xi, zi) for nm_, xi, zi in mass_pads}
+def snap_mass(m):
+    xi, zi = pad_by_name[m.group(2)]
+    return m.group(1) + f"VECTOR3( {xi}.500000, {Hn[zi*w + xi]/128.0:.6f}, {zi}.500000 )"
+sav = re.sub(r"(\['(Mass \d+)'\].*?)VECTOR3\(\s*[^)]*\)", snap_mass, sav, flags=re.S)
 script = lua104[f"{SRC_LAYOUT}_script.lua"].replace(SRC_LAYOUT, ID_NEW)
 
-# ---- minimap synthetic + previews ----
+# ---- minimap + previews: per-pixel render from the FINAL heights ----
+# v8: the old two-block stamp tiled one donor land block over every dry cell -
+# zebra stripes, no relief, and the lobby preview inherited it (user: "fix the
+# preview image"). Render real pixels instead; DXT1-encode as solid-colour
+# blocks (c0==c1, bits=0) = a 4x4 box filter, striping impossible.
 mmd = bytearray(donor[DONOR + ".minimap.win.dds"])
 mh, mw = struct.unpack_from("<II", mmd, 12)
-cpp = G // mw; cpb = 4 * cpp
-def grab_block(px, pz):
-    return bytes(mmd[128 + ((pz//cpp)//4 * (mw//4) + (px//cpp)//4) * 8:][:8])
-sea_px = dry_px = None
-for z in range(0, G, 13):
-    for x in range(0, G, 13):
-        if H0[z*w+x] < WR - 20*128 and sea_px is None: sea_px = (x, z)
-        if H0[z*w+x] > WR + 20*128 and dry_px is None: dry_px = (x, z)
-sea_block = grab_block(*sea_px); land_block = grab_block(*dry_px)
+def lerp3(a, b, t):
+    return (int(a[0]+(b[0]-a[0])*t), int(a[1]+(b[1]-a[1])*t), int(a[2]+(b[2]-a[2])*t))
+SEA_DEEP = (18, 58, 72); SEA_SHAL = (46, 125, 130); SHORE = (168, 150, 110)
+SANDC = (196, 178, 132); GRASSC = (104, 138, 80); ROCKC = (128, 110, 88)
+CAUSEC = (205, 195, 168)
+mm_rgb = bytearray(mw * mh * 3)
+for z in range(mh):
+    zz = z * G // mh
+    for x in range(mw):
+        xx = x * G // mw
+        h = Hn[zz*w + xx] / 128.0
+        if bridge_mask[zz*G + xx]:
+            c = CAUSEC
+        elif h < WL:
+            c = lerp3(SEA_SHAL, SEA_DEEP, max(0.0, min(1.0, (WL - h) / 8.0)))
+        elif h < WL + 1.0:
+            c = SHORE
+        else:
+            t_ = max(0.0, min(1.0, (h - WL) / 12.0))
+            c = lerp3(SANDC, GRASSC, t_/0.75) if t_ < 0.75 else lerp3(GRASSC, ROCKC, (t_-0.75)/0.25)
+            hx = Hn[zz*w + min(G-1, xx+1)]/128.0 - h
+            hz = Hn[min(w-2, zz+1)*w + xx]/128.0 - h
+            sh = max(-16, min(16, int((hx + hz) * 12)))
+            c = (max(0, min(255, c[0]+sh)), max(0, min(255, c[1]+sh)), max(0, min(255, c[2]+sh)))
+        o2 = (z*mw + x) * 3
+        mm_rgb[o2:o2+3] = bytes(c)
+for sx_, sz_ in SPAWNS.values():             # spawn dots for the lobby panel
+    for dz_ in range(-5, 6):
+        for dx_ in range(-5, 6):
+            if dx_*dx_ + dz_*dz_ <= 25 and 0 <= sx_+dx_ < mw and 0 <= sz_+dz_ < mh:
+                o2 = ((sz_+dz_)*mw + sx_+dx_) * 3
+                mm_rgb[o2:o2+3] = bytes((255, 224, 64))
 for bz in range(mh // 4):
     for bx in range(mw // 4):
-        cx0, cz0 = bx * cpb, bz * cpb
-        n_dry = sum(1 for cz in range(cz0, min(G, cz0+cpb))
-                    for cx in range(cx0, min(G, cx0+cpb)) if dry_mask[cz*G + cx])
-        off = 128 + (bz * (mw//4) + bx) * 8
-        mmd[off:off+8] = land_block if n_dry >= (cpb*cpb)//2 else sea_block
-def dxt1_decode(d, tw, th):
-    px = bytearray(tw * th * 3)
-    for bz in range(th // 4):
-        for bx in range(tw // 4):
-            off = 128 + (bz * (tw//4) + bx) * 8
-            c0, c1 = struct.unpack_from("<HH", d, off)
-            bits = struct.unpack_from("<I", d, off+4)[0]
-            def rgb(c): return (((c>>11)&31)*255//31, ((c>>5)&63)*255//63, (c&31)*255//31)
-            p0, p1 = rgb(c0), rgb(c1)
-            pal = [p0, p1,
-                   tuple((2*a+b)//3 for a, b in zip(p0, p1)) if c0 > c1 else tuple((a+b)//2 for a, b in zip(p0, p1)),
-                   tuple((a+2*b)//3 for a, b in zip(p0, p1)) if c0 > c1 else (0, 0, 0)]
-            for py in range(4):
-                for pxi in range(4):
-                    r, g, b = pal[(bits >> (2*(py*4+pxi))) & 3]
-                    o2 = ((bz*4+py) * tw + bx*4+pxi) * 3
-                    px[o2:o2+3] = bytes((r, g, b))
-    return px
-mm_rgb = dxt1_decode(mmd, mw, mh)
+        rs = gs = bs = 0
+        for py in range(4):
+            for pxi in range(4):
+                o2 = ((bz*4+py)*mw + bx*4+pxi) * 3
+                rs += mm_rgb[o2]; gs += mm_rgb[o2+1]; bs += mm_rgb[o2+2]
+        c565 = (((rs//16) >> 3) << 11) | (((gs//16) >> 2) << 5) | ((bs//16) >> 3)
+        struct.pack_into("<HHI", mmd, 128 + (bz*(mw//4) + bx) * 8, c565, c565, 0)
 def make_preview(stock_img):
     ih = struct.unpack_from("<I", stock_img, 12)[0]
     iw = struct.unpack_from("<I", stock_img, 16)[0]
@@ -724,7 +920,7 @@ def make_preview(stock_img):
                 so = (sz * mw + sx) * 3
                 r, g, b = mm_rgb[so], mm_rgb[so+1], mm_rgb[so+2]
             else:
-                r = g = b = 12
+                r, g, b = SEA_DEEP          # v8: sea-coloured letterbox, not black
             out_img[o2:o2+4] = bytes((b, g, r, 255))
     return bytes(out_img)
 shot_new = make_preview(donor[DONOR + "_PC_mapshot.dds"])
@@ -915,6 +1111,24 @@ for nm_, xi, zi in mass_pads:
         print(f"  BAD pad {nm_} at ({xi},{zi})", flush=True)
 print(f"mass pads bad: {bad_pad} (want 0)", flush=True)
 allok &= bad_pad == 0
+# v8 gate: validate the SHIPPED save.lua marker positions, not the pad list -
+# the v7 bug was exactly this divergence (pads fine, markers stranded)
+bad_mm = n_mm = 0
+for nm_, a_, c_ in re.findall(r"\['(Mass \d+)'\].*?VECTOR3\(\s*([\d.eE+-]+)\s*,\s*[\d.eE+-]+\s*,\s*([\d.eE+-]+)\s*\)", sav, re.S):
+    n_mm += 1
+    xi, zi = int(float(a_)), int(float(c_))
+    cellsH = [Hn[z2*w+x2] for z2 in range(zi-5, zi+6) for x2 in range(xi-5, xi+6)]
+    blocked = sum(1 for z2 in range(zi-5, zi+6) for x2 in range(xi-5, xi+6)
+                  if not m0[z2*G+x2])
+    if (max(cellsH) - min(cellsH)) / 128.0 > 0.15 or blocked:
+        bad_mm += 1
+        print(f"  BAD shipped marker {nm_} at ({xi},{zi}) "
+              f"dh={(max(cellsH)-min(cellsH))/128.0:.2f} blocked={blocked}", flush=True)
+print(f"shipped mass markers: {n_mm}, bad: {bad_mm} (want 36, 0)", flush=True)
+allok &= n_mm == 36 and bad_mm == 0
+# v8 gate: scenery degeneration happened and stayed hole-free by construction
+print(f"scenery degeneration: {deg_n} removed, {kept_n} kept (floor)", flush=True)
+allok &= 3000 <= deg_n and deg_n + kept_n == len(cand_t)
 assert allok, "verification failed"
 
 # ---- package ----
