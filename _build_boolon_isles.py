@@ -36,7 +36,7 @@ G = 1024
 DONOR = "SC2_MP_302"
 SRC_LAYOUT = "SC2_MP_104"
 ID_NEW = "SC2_BOOLI1"
-NAME = "[6] Boolon Isles (3v3) v3"
+NAME = "[6] Boolon Isles (3v3) v7"
 OUT = os.path.join(sm.GAMEDATA, "_boolon_isles.scd")
 WL = 56.0; WR = int(WL * 128)
 ISLAND_TOP = WL + 9.0
@@ -233,6 +233,44 @@ isl_mask = bytearray(G*G)
 for cells in islands.values():
     for i in cells: isl_mask[i] = 1
 
+# v7: the growth passes surround donor craters but never claim their
+# interiors - each enclosed pocket became a tapered bowl sunk into the flat
+# arena (the "rings" seen in-game, some water-filled). Border-flood the
+# non-island space; whatever the flood can't reach is a hole - fill it into
+# its Voronoi-nearest island so it becomes ordinary flat ground.
+outside = bytearray(G*G)
+qh = deque()
+for x in range(G):
+    for i in (x, (G-1)*G + x):
+        if not isl_mask[i] and not outside[i]:
+            outside[i] = 1; qh.append(i)
+for z in range(G):
+    for i in (z*G, z*G + G - 1):
+        if not isl_mask[i] and not outside[i]:
+            outside[i] = 1; qh.append(i)
+while qh:
+    i = qh.popleft()
+    x, z = i % G, i // G
+    for dx, dz in ((1,0),(-1,0),(0,1),(0,-1)):
+        nx, nz = x+dx, z+dz
+        if 0 <= nx < G and 0 <= nz < G:
+            j = nz*G + nx
+            if not isl_mask[j] and not outside[j]:
+                outside[j] = 1; qh.append(j)
+idx_pid = {v: k for k, v in pid_idx.items()}
+hole_n = 0
+holes_by_pid = {}
+for i in range(G*G):
+    if not isl_mask[i] and not outside[i]:
+        holes_by_pid.setdefault(idx_pid[near_id[i]], []).append(i)
+        hole_n += 1
+for pid, cells in holes_by_pid.items():
+    islands[pid] = list(set(islands[pid]) | set(cells))
+    for i in cells:
+        isl_mask[i] = 1; owner0[i] = pid_idx[pid]
+print(f"island holes filled: {hole_n} cells across {len(holes_by_pid)} islands",
+      flush=True)
+
 # ---- blueprint: bridges from original necks ----
 def boundary(cells):
     bs = []
@@ -359,14 +397,8 @@ for pid, cells in islands.items():
         relief = ISLAND_MIN + max(0.0, min(ISLAND_TOP - ISLAND_MIN,
                                            (H0[z*w + x] / 128.0 - dmin) * 0.35))
         if pid == big_id:
-            d = din.get(i, 0)
-            if d >= 18:
-                yv = ARENA_H                          # the contested arena
-            elif d >= 12:
-                t_ = (d - 12) / 6.0
-                yv = relief * (1 - t_) + ARENA_H * t_ # blend band
-            else:
-                yv = relief                           # coastal fringe keeps relief
+            yv = ARENA_H      # v4: whole central island flat (user: remove the
+                              # hills - the fringe relief read as visual clutter)
         else:
             yv = relief
         setH(x, z, yv)
@@ -418,8 +450,9 @@ print("bridges built", flush=True)
 # (BEFORE the hfield freeze so mesh/collision/waterDepth all see the pads;
 # Iskellian lesson: unlevelled relief under masses = unbuildable extractors) ----
 walk_approx = bytearray(1 if (isl_mask[i] or bridge_mask[i]) else 0 for i in range(G*G))
-# pads must sit fully INSIDE islands: use the interior (eroded) mask for targets
-pad_interior = erode_m(bytearray(isl_mask), 6)
+# pads must sit WELL inside islands (v4: 12-cell margin - water-edge pads
+# failed the in-game build check, user report)
+pad_interior = erode_m(bytearray(isl_mask), 12)
 def nearest_approx(xi, zi):
     for rr in range(0, 120, 2):
         for dz in range(-rr, rr+1, 2):
@@ -472,11 +505,41 @@ for i in range(nv2):
     ox, oy, oz = struct.unpack_from("<3f", p_orig, b_orig + 20 + 32*i)
     if not (0 <= ox < G and 0 <= oz < G): continue
     if oy < 5.0: continue
-    if abs(oy - WL) < 1.0: continue
     oh = sm.hf_sample(H0, w, ox, oz)
-    if oy > oh + 8.0: continue                       # tall scenery stays
     xi, zi = int(ox), int(oz)
     ii = zi*G + xi
+    nh = sm.hf_sample(Hn, w, ox, oz)
+    # v6: flush stray geometry standing over OUR water, over near-water ground
+    # (beach taper ring, mid-channel sandbars), or over a bridge deck - donor
+    # sea-stack spires (never hfield-tracking, so the resample skips them) and
+    # delta-lifted shore verts both land here. Tests CURRENT y (post-resample);
+    # the |y-WL|<1 guard protects the water sheet.
+    if nh < WL + 3.5 or bridge_mask[ii]:
+        x, y, z = struct.unpack_from("<3f", pb, off)
+        if y > max(nh, WL) + 1.0 and abs(y - WL) >= 1.0:
+            gy = nh - 0.15
+            if abs(y - gy) > 0.3:
+                struct.pack_into("<3f", pb, off, x, gy, z)
+                forced += 1
+            continue
+    # v7: on island footprints the near-56 sheet protection must NOT apply -
+    # donor shoreline verts and inland crater-lake sheets sat ~5.5 below the
+    # new arena, digging ring pits with embedded ponds (the in-game "rings").
+    # Ground verts (tracking donor ground) sync like everything else; sheet
+    # disks (floating above donor ground) get buried 2 under the arena floor.
+    if isl_mask[ii] and abs(oy - WL) < 1.0:
+        x, y, z = struct.unpack_from("<3f", pb, off)
+        ny = (nh - 2.0) if oy > oh + 2.0 else (nh - 0.15)
+        if abs(y - ny) > 0.3:
+            struct.pack_into("<3f", pb, off, x, ny, z)
+            forced += 1
+        continue
+    if abs(oy - WL) < 1.0: continue
+    # v5: tall donor relief (crater rims) is pulled down WITH the ground on
+    # island footprints - it kept rendering as rocky rings on the flat arena
+    # (the "hills" the user kept seeing); off-island tall scenery stays
+    if oy > oh + 8.0 and not isl_mask[ii]:
+        continue
     touched = isl_mask[ii] or bridge_mask[ii] or dist_out[ii] <= TAPER or H0[zi*w + xi] > int(SEA_MAX*128)
     if not touched: continue
     gy = sm.hf_sample(Hn, w, ox, oz) - 0.15
@@ -726,20 +789,29 @@ for a_, c_ in re.findall(r"VECTOR3\(\s*([\d.eE+-]+)\s*,\s*[\d.eE+-]+\s*,\s*([\d.
         bad_mk += 1
 print(f"markers off-land: {bad_mk} (want 0)", flush=True)
 allok &= bad_mk == 0
-# mesh gate: dry walkable cells, no vert above walking height
+# mesh gate: walkable cells no vert above walking height (v6: no more
+# tall-scenery exemption - islands AND bridges are both flushed now);
+# wet cells nothing pokes above the water plane
 p3, b3, nv3, _ = sm.locate_mesh_blob(terr_new)
 worst = -99.0; worst_at = None
+worst_wet = -99.0; worst_wet_at = None
 for i in range(nv3):
     x, y, z = struct.unpack_from("<3f", p3, b3 + 20 + 32*i)
-    if 0 <= x < G and 0 <= z < G and m0[int(z)*G + int(x)]:
+    if 0 <= x < G and 0 <= z < G:
         if y < 5.0 or abs(y - WL) < 1.2:      # skirt / water sheet (edit-pass skips)
             continue
-        ox, oy, oz = struct.unpack_from("<3f", p_orig, b_orig + 20 + 32*i)
-        if oy > sm.hf_sample(H0, w, ox, oz) + 8.0: continue
-        d = y - sm.hf_sample(Hn, w, x, z)
-        if d > worst: worst, worst_at = d, (round(x), round(z), round(y, 1))
+        if m0[int(z)*G + int(x)]:
+            d = y - sm.hf_sample(Hn, w, x, z)
+            if d > worst: worst, worst_at = d, (round(x), round(z), round(y, 1))
+        else:
+            nh2 = sm.hf_sample(Hn, w, x, z)
+            if nh2 < WL + 3.5:                # water + beach ring + sandbars
+                d = y - max(nh2, WL)
+                if d > worst_wet: worst_wet, worst_wet_at = d, (round(x), round(z), round(y, 1))
 print(f"mesh gate: worst above ground {worst:.2f} at {worst_at}", flush=True)
+print(f"mesh gate (wet): worst above water {worst_wet:.2f} at {worst_wet_at}", flush=True)
 allok &= worst < 4.0
+allok &= worst_wet < 2.0
 # collision gate
 cp2 = sm.read_bdf_payload(col_new)
 worst_c = -99.0
