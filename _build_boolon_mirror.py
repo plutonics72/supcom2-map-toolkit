@@ -32,7 +32,7 @@ G = 1024
 DONOR = "SC2_MP_302"
 SRC_LAYOUT = "SC2_MP_104"
 ID_NEW = "SC2_BOOLW1"
-NAME = "[6] Boolon Harbor (3v3) v5"
+NAME = "[6] Boolon Harbor (3v3) v6"
 OUT = os.path.join(sm.GAMEDATA, "_boolon_harbor.scd")
 WL = 56.0; WR = int(WL * 128)            # Treallach water level (proven by the Strait build)
 DECK_Y = 66.0; SEA_Y = 41.0
@@ -219,26 +219,36 @@ print("nav rebuilt + islands", flush=True)
 # ---- waterDepth: proven full-mip writer (built Treallach Strait) ----
 t_wd = sm.Terrain(DONOR)
 t_wd.set_hfield(hf_new)
-# footprint-aware (Iskellian lesson: block-granular texture -> dilate the deck
-# mask 4 cells so no deck rim texel classifies water) + height-aware (dry ramp
-# tops classify dry; the frozen-units lesson)
-deck_wd = bytearray(deck)
-for _d in range(8):     # block=8 cells, writer samples the CENTER: corner deck
-                        # cells sit Manhattan-7 away, so dilate 8 to cover
-    g2 = bytearray(deck_wd)
-    for z in range(1, G-1):
-        b = z*G
-        for x in range(1, G-1):
-            if not deck_wd[b+x] and (deck_wd[b+x-1] or deck_wd[b+x+1]
-                                     or deck_wd[b-G+x] or deck_wd[b+G+x]):
-                g2[b+x] = 1
-    deck_wd = g2
+# v6: the v5 dilate-8 halo dry-marked huge stair-stepped rings around the lacy
+# deck complex - waterDepth also gates the WATER RENDER, so the sea vanished in
+# white rectangles (user photos, 10 Aug). Correct rule: plain per-cell dryness
+# for the writer (deck or dry-by-height, ramp tops included), then a
+# BLOCK-ACCURATE post-pass on mip0: only blocks that truly CONTAIN a deck cell
+# are forced dry (ships-ashore guard without any halo). Harbor's sheer deck
+# walls are unclimbable for ships anyway (unlike Iskellian's beach slopes).
 def is_water(x, z):
     xi = min(G-1, max(0, int(x))); zi = min(G-1, max(0, int(z)))
-    if deck_wd[zi*G + xi]:
+    if deck[zi*G + xi]:
         return False
     return Hn[zi*w + xi] <= WR
-wd = sm.write_waterdepth_dds_mips(t_wd, WL, is_water=is_water)
+wd = bytearray(sm.write_waterdepth_dds_mips(t_wd, WL, is_water=is_water))
+forced_dry = 0
+for bj in range(128):
+    for bi in range(128):
+        has_deck = False
+        for cz in range(bj*8, bj*8 + 8):
+            base_ = cz*G
+            for cx in range(bi*8, bi*8 + 8):
+                if deck[base_ + cx]:
+                    has_deck = True; break
+            if has_deck: break
+        if has_deck:
+            off = 128 + (bj*128 + bi) * 16
+            if wd[off] != 0 or wd[off+1] != 0:
+                wd[off:off+16] = bytes(8) + struct.pack("<HHI", 0, 0, 0)
+                forced_dry += 1
+wd = bytes(wd)
+print(f"wd post-pass: {forced_dry} deck-carrying mip0 blocks forced dry (no halo)", flush=True)
 wh, ww = struct.unpack_from("<II", wd, 12)
 scale = G // ww
 def alpha_mean(d, bx, bz):
