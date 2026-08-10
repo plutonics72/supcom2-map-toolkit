@@ -36,7 +36,7 @@ G = 1024
 DONOR = "SC2_MP_302"
 SRC_LAYOUT = "SC2_MP_104"
 ID_NEW = "SC2_BOOLI1"
-NAME = "[6] Boolon Isles (3v3) v1"
+NAME = "[6] Boolon Isles (3v3) v2"
 OUT = os.path.join(sm.GAMEDATA, "_boolon_isles.scd")
 WL = 56.0; WR = int(WL * 128)
 ISLAND_TOP = WL + 9.0
@@ -123,12 +123,109 @@ for pid in list(islands):
 print(f"islands: {len(islands)}: " + ", ".join(
     f"P{pid}({len(c)})" for pid, c in sorted(islands.items(), key=lambda kv: -len(kv[1]))), flush=True)
 assert 8 <= len(islands) <= 12, "unexpected island count"
+# ---- v2: classify islands, fill the central lake, grow the home islands ----
+big_id = max(islands, key=lambda p: len(islands[p]))
+cent = {}
+for pid, cells in islands.items():
+    xs = sum(i % G for i in cells) // len(cells)
+    zs = sum(i // G for i in cells) // len(cells)
+    cent[pid] = (xs, zs)
+owner0 = bytearray(G*G)          # 1-based compact ids for BFS labels
+pid_order = sorted(islands)
+pid_idx = {pid: k+1 for k, pid in enumerate(pid_order)}
+for pid, cells in islands.items():
+    for i in cells: owner0[i] = pid_idx[pid]
+spawn_ids = set()
+for a, (sx, sz) in SPAWNS.items():
+    assert owner0[sz*G + sx], f"spawn {a} not on an island footprint"
+    spawn_ids.add(pid_order[owner0[sz*G + sx] - 1])
+stone_ids = {pid for pid in islands
+             if pid not in spawn_ids and pid != big_id and 320 <= cent[pid][0] <= 390}
+east_id = next(pid for pid in islands
+               if pid not in spawn_ids and pid != big_id and pid not in stone_ids
+               and cent[pid][0] > 700)
+print(f"classified: central P{big_id}, east P{east_id}, spawns {sorted(spawn_ids)}, "
+      f"stones {sorted(stone_ids)}", flush=True)
+
+# (lake fill happens after the Voronoi fields are built - see below)
+
+# growth guards: Voronoi labels + distance-to-Voronoi-boundary (keeps 20-cell gaps)
+near_id = bytearray(owner0)
+near_d = [0 if owner0[i] else 10**6 for i in range(G*G)]
+q = deque(i for i in range(G*G) if owner0[i])
+while q:
+    i = q.popleft(); x, z = i % G, i // G
+    for dx, dz in ((1,0),(-1,0),(0,1),(0,-1)):
+        nx, nz = x+dx, z+dz
+        if 0 <= nx < G and 0 <= nz < G:
+            j = nz*G+nx
+            if near_d[j] > near_d[i] + 1:
+                near_d[j] = near_d[i] + 1
+                near_id[j] = near_id[i]
+                q.append(j)
+bd = [10**6]*(G*G)
+q = deque()
+for z in range(G):
+    for x in range(G):
+        i = z*G + x
+        for dx, dz in ((1,0),(0,1)):
+            nx, nz = x+dx, z+dz
+            if nx < G and nz < G and near_id[nz*G+nx] != near_id[i]:
+                if bd[i]: bd[i] = 0; q.append(i)
+                j = nz*G+nx
+                if bd[j]: bd[j] = 0; q.append(j)
+while q:
+    i = q.popleft(); x, z = i % G, i // G
+    for dx, dz in ((1,0),(-1,0),(0,1),(0,-1)):
+        nx, nz = x+dx, z+dz
+        if 0 <= nx < G and 0 <= nz < G:
+            j = nz*G+nx
+            if bd[j] > bd[i] + 1:
+                bd[j] = bd[i] + 1; q.append(j)
+
+# lake fill (needs the Voronoi fields): the measured v1 lake pocket (bbox
+# x255-431 z325-466) becomes arena floor of the central island; an 8-cell moat
+# stays around any OTHER island (the stepping stone keeps its ring of water)
+stone_idx = {pid_idx[pid] for pid in stone_ids}
+lake_cells = []
+for z in range(325, 467):
+    for x in range(255, 432):
+        i = z*G + x
+        if owner0[i]:
+            continue
+        # central's own region always fills; stepping-stone regions fill only
+        # beyond an 8-cell moat; SPAWN-island regions never fill (their x4
+        # growth expands there - filling them fused P15 with the arena)
+        if near_id[i] == pid_idx[big_id] or (near_id[i] in stone_idx and near_d[i] >= 8):
+            lake_cells.append(i)
+islands[big_id] = list(set(islands[big_id]) | set(lake_cells))
+for i in lake_cells: owner0[i] = pid_idx[big_id]
+print(f"lake fill: {len(lake_cells)} cells joined the central island (arena floor)", flush=True)
+
+FRAME = 24
+def grow_island(pid, want_cells, max_r, min_bd=8):
+    idx = pid_idx[pid]
+    cur = set(islands[pid])
+    elig = [(near_d[i], i) for i in range(G*G)
+            if not owner0[i] and near_id[i] == idx and near_d[i] <= max_r and bd[i] >= min_bd
+            and FRAME <= i % G < G - FRAME and FRAME <= i // G < G - FRAME]
+    elig.sort()
+    for _d, i in elig:
+        if len(cur) >= want_cells: break
+        cur.add(i)
+    islands[pid] = list(cur)
+    return len(cur)
+
+v1_sizes = {pid: len(c) for pid, c in islands.items()}
+for pid in sorted(spawn_ids):
+    got = grow_island(pid, 4 * v1_sizes[pid], 60)
+    print(f"spawn island P{pid}: {v1_sizes[pid]} -> {got} cells", flush=True)
+got_e = grow_island(east_id, 4 * v1_sizes[east_id], 26)
+print(f"east peninsula P{east_id}: {v1_sizes[east_id]} -> {got_e} cells", flush=True)
+
 isl_mask = bytearray(G*G)
 for cells in islands.values():
     for i in cells: isl_mask[i] = 1
-# every spawn must be on an island
-for a, (sx, sz) in SPAWNS.items():
-    assert isl_mask[sz*G + sx], f"spawn {a} not on an island footprint"
 
 # ---- blueprint: bridges from original necks ----
 def boundary(cells):
@@ -232,12 +329,40 @@ while q:
             j = nz*G+nx
             if dist_out[j] > d + 1:
                 dist_out[j] = d + 1; q.append(j)
+ARENA_H = ISLAND_MIN + 0.5
+# central island: dist-to-coast BFS for the interior-flat arena
+cent_set = set(islands[big_id])
+din = {}
+q = deque()
+for i in cent_set:
+    x, z = i % G, i // G
+    if any(((z+dz)*G + (x+dx)) not in cent_set
+           for dx, dz in ((1,0),(-1,0),(0,1),(0,-1)) if 0 <= x+dx < G and 0 <= z+dz < G):
+        din[i] = 0; q.append(i)
+while q:
+    i = q.popleft(); d = din[i]
+    x, z = i % G, i // G
+    for dx, dz in ((1,0),(-1,0),(0,1),(0,-1)):
+        j = (z+dz)*G + (x+dx)
+        if j in cent_set and din.get(j, 10**6) > d + 1:
+            din[j] = d + 1; q.append(j)
 for pid, cells in islands.items():
     dmin = min(H0[(i//G)*w + (i % G)] for i in cells) / 128.0
     for i in cells:
         x, z = i % G, i // G
-        # compress donor relief 0.35x into the island band (clamping flattened it)
-        yv = ISLAND_MIN + min(ISLAND_TOP - ISLAND_MIN, (H0[z*w + x] / 128.0 - dmin) * 0.35)
+        relief = ISLAND_MIN + max(0.0, min(ISLAND_TOP - ISLAND_MIN,
+                                           (H0[z*w + x] / 128.0 - dmin) * 0.35))
+        if pid == big_id:
+            d = din.get(i, 0)
+            if d >= 18:
+                yv = ARENA_H                          # the contested arena
+            elif d >= 12:
+                t_ = (d - 12) / 6.0
+                yv = relief * (1 - t_) + ARENA_H * t_ # blend band
+            else:
+                yv = relief                           # coastal fringe keeps relief
+        else:
+            yv = relief
         setH(x, z, yv)
 # taper ring: blend island edge down to the sea floor
 for i in range(G*G):
@@ -638,6 +763,59 @@ allok &= bad_wd == 0
 sea_a = alpha_mean(wd, (60//scale)//4, (60//scale)//4)
 print(f"wd open sea alpha: {sea_a} (want water >=40)", flush=True)
 allok &= sea_a >= 40
+# v2 gates: arena size, east peninsula width, growth factors, island count
+flat_arena = sum(1 for i in cent_set
+                 if abs(Hn[(i//G)*w + (i % G)]/128.0 - ARENA_H) <= 0.2)
+print(f"arena flat cells: {flat_arena} (want >= 45000)", flush=True)
+allok &= flat_arena >= 45000
+e_rows = defaultdict(int)
+for i in islands[east_id]:
+    e_rows[i // G] += 1
+zs_sorted = sorted(e_rows)
+mid_rows = zs_sorted[len(zs_sorted)//10 : -len(zs_sorted)//10 or None]
+min_wid = min(e_rows[zr] for zr in mid_rows)
+print(f"east peninsula min mid-row width: {min_wid} (want >= 60)", flush=True)
+allok &= min_wid >= 60
+for pid in sorted(spawn_ids):
+    ratio = len(islands[pid]) / v1_sizes[pid]
+    print(f"spawn island P{pid} growth: x{ratio:.2f} (want >= 3.8)", flush=True)
+    allok &= ratio >= 3.8
+n_comp = 0
+seen_ic = bytearray(G*G)
+for i in range(G*G):
+    if isl_mask[i] and not seen_ic[i]:
+        n_comp += 1
+        q = deque([i]); seen_ic[i] = 1
+        while q:
+            j = q.popleft(); x, z = j % G, j // G
+            for dx, dz in ((1,0),(-1,0),(0,1),(0,-1)):
+                nx, nz = x+dx, z+dz
+                if 0 <= nx < G and 0 <= nz < G and isl_mask[nz*G+nx] and not seen_ic[nz*G+nx]:
+                    seen_ic[nz*G+nx] = 1; q.append(nz*G+nx)
+print(f"island components: {n_comp} (want {len(islands)} - no merges)", flush=True)
+if n_comp != len(islands):
+    comp_of = {}
+    seen_dbg = bytearray(G*G)
+    cid = 0
+    for i in range(G*G):
+        if isl_mask[i] and not seen_dbg[i]:
+            cid += 1
+            qd = deque([i]); seen_dbg[i] = 1
+            while qd:
+                j = qd.popleft(); comp_of[j] = cid
+                x, z = j % G, j // G
+                for dx, dz in ((1,0),(-1,0),(0,1),(0,-1)):
+                    nx, nz = x+dx, z+dz
+                    if 0 <= nx < G and 0 <= nz < G and isl_mask[nz*G+nx] and not seen_dbg[nz*G+nx]:
+                        seen_dbg[nz*G+nx] = 1; qd.append(nz*G+nx)
+    by_comp = defaultdict(set)
+    for pid, cells in islands.items():
+        for i in cells[::37]:
+            by_comp[comp_of.get(i, -1)].add(pid)
+    for c2, pids2 in sorted(by_comp.items()):
+        if len(pids2) > 1:
+            print(f"  dbg MERGED component {c2}: islands {sorted(pids2)}", flush=True)
+allok &= n_comp == len(islands)
 # amph unity: open sea and islands share one amph island (beaches open)
 offB_a = layers[amph_L[0]][4]
 isl_sea_a = pay[offB_a + 60*G + 60]
