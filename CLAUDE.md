@@ -44,11 +44,11 @@ differ from the user-facing versions in `READ ME - Install.txt` (that file wins)
 | [4] Dune Rift (2v2) v3 | `_dune_rift_2v2.scd` | — | good (23 Jul sync); still lacks the 3v3 mass-pad/ramp fixes |
 | [4] Treallach Strait (2v2) | `_treallach_strait.scd` | `SC2_TRST01` | good |
 | [8] Iskellian Extended (4v4) v6 | `_iskellian_ext8.scd` | `SC2_ISKEX3` | released 25 Jul (ships-ashore fixed: island shorelines were water-classified at 16-cell block granularity — every island-carrying waterDepth block now dry; frozen units stood on that band; island-zone collision snap; versioned lobby name) |
-| [6] Boolon Isles (3v3) v1 | `_boolon_isles.scd` | `SC2_BOOLI1` | installed on the LAPTOP (10 Aug) — NOT on Drive. Boolon's TRUE topology as real terrain islands: 10 island silhouettes extracted from MP_104's nav mask (erosion r=12, +3 dilation), 10 causeway bridges (6 evidence-reconstructed from original necks + 4 spanning), open sea between (no drowned-donor ghost), 36 levelled mass pads, hover beaches via island tapers, bridge anti-boarding walls. Gates: r=3 all-spawn routes, bridges-cut isolation 5/5, pads flat, amph unity, block-accurate wd. Response to the user verdict that Harbor "looks like a different map" — awaiting eyes |
+| [6] Boolon Isles (3v3) v7 | `_boolon_isles.scd` | `SC2_BOOLI1` | installed on the LAPTOP (10 Aug), in-game verified BY CLAUDE (screen access granted 10 Aug) — NOT on Drive. Boolon's TRUE topology as real terrain islands: 10 island silhouettes from MP_104's nav mask, 10 causeway bridges, v2 spec (flat central arena, lake filled, east peninsula 60+, home islands x4), v3 arena parity (93.5k cells), v4 interior-clamped pads + whole-island flat, v5-v7 render-mesh war: donor crater rims pulled down (v5), +71 sea-stack spires flushed over water/beach/bridges + wet mesh gate (v6), sunken shoreline rings + embedded crater-lake ponds fixed by dropping the near-56 sheet protection on island footprints (v7). Arena reads flat in-game; residual dark arcs = position-baked texture (proven limit). Extractor build verified on pads (v4). Awaiting user playtest |
 | Frost Crater / Ashen Basin (3v3) | `_frost_crater_3v3.scd` / `_ashen_basin_3v3.scd` | — | good (re-skins) |
 | Crucible / Crossfire Atoll / The Maw | `_*_by_chris.scd` | — | user-made, untouched |
 | [6] Boolon Complex Extended (3v3) v6 | `_boolon_ext.scd` | `SC2_BOOLX1` | installed on the LAPTOP (10 Aug) — NOT on Drive. v5 nearest-donor transplant = map-wide zebra (user photos); v6 = uniform slab attr scoped to east+fills, original decks untouched. This is the CEILING for the born-dry class (attr position-dependence proven 3 ways); if the user dislikes the slab, retire Extended in favor of Harbor |
-| [6] Boolon Harbor (3v3) v5 | `_boolon_harbor.scd` | `SC2_BOOLW1` | rebuilt+installed on the LAPTOP (10 Aug), supersedes the old machine's v4 (byte-different; lobby name carries v5) — NOT on Drive. v5 refinements: hover landing ramps W(213,403)/E(783,420), density-gated anti-boarding walls (walkways exempt, gated), footprint+height-aware waterDepth (0 deck cells water-classified, gated), marker/mesh/route/island gates all green. Awaiting user eyes |
+| [6] Boolon Harbor (3v3) v6 | `_boolon_harbor.scd` | `SC2_BOOLW1` | rebuilt+installed on the LAPTOP (10 Aug) — NOT on Drive. v5 refinements: hover landing ramps W(213,403)/E(783,420), density-gated anti-boarding walls, marker/mesh/route/island gates green. v6: block-accurate waterDepth dry-marking replaced the dilate-8 halo (the halo clipped the water render into white rectangles around the deck complex — user photos 10 Aug). Superseded in spirit by Boolon Isles (user: Harbor "looks like a different map"); keep/drop is the user's call |
 
 Latest-generation build scripts (each is self-contained, reads the game files +
 prior installed maps, verifies, installs):
@@ -143,16 +143,20 @@ prior installed maps, verifies, installs):
   it, and the transplant gained gates (positions byte-asserted untouched;
   recolored>1000; attrs actually changed). Run results: 131,931 new cells,
   9,392 verts re-attributed (9,186 changed, 0 no-donor skips), all r=3/r=5
-  routes + east platform OK. In-game self-verification NOT possible on this
-  machine (user declines screen access — do not re-request); the user checks
-  visually instead: east platform x 690–832 should render as deck ground,
-  not pale mist, at both zooms. Fallback if patchwork-noisy: single fixed
+  routes + east platform OK. In-game self-verification IS possible now:
+  screen access to `supremecommander2.exe` was granted 10 Aug (full tier) —
+  launch via Steam CLI, drive the lobby, verify visually. Check: east
+  platform x 690–832 should render as deck ground, not pale mist, at both
+  zooms. Fallback if patchwork-noisy: single fixed
   donor attr (see nearest_attr note). On approval: release BOTH Boolon maps
   per the release loop. NOTE: on this machine the game may never have had
   the map before — fresh lobby entry "[6] Boolon Complex Extended (3v3) v5".
-- **Boolon Harbor v4 — awaiting user play-test**. Installed on the old
-  machine only. If the user approves, rebuild/install on request and release
-  to Drive alongside Extended.
+- **Boolon Isles v7 — awaiting user playtest, then Drive release on their
+  word**. In-game verified 10 Aug (Claude-driven): arena flat, no spires/
+  rings/ponds, pads buildable. If approved, decide Harbor keep/drop and
+  Extended retire at the same time.
+- **Boolon Harbor v6 — installed on the laptop, awaiting user verdict**
+  (they called it "a different map"; Isles is the direct answer to that).
 - **Port the full v12 nav stack to the 3v3 and 2v2**: nav noise repair,
   hover-land unify, stock water-layer opening, shore ribbon, pocket revert,
   and the dried-oasis honesty fix (the same fake-dry gully exists on both —
