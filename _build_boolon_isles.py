@@ -36,7 +36,7 @@ G = 1024
 DONOR = "SC2_MP_302"
 SRC_LAYOUT = "SC2_MP_104"
 ID_NEW = "SC2_BOOLI1"
-NAME = "[6] Boolon Isles (3v3) v11"
+NAME = "[6] Boolon Isles (3v3) v12"
 OUT = os.path.join(sm.GAMEDATA, "_boolon_isles.scd")
 WL = 56.0; WR = int(WL * 128)
 ISLAND_TOP = WL + 9.0
@@ -553,176 +553,11 @@ for i in range(nv2):
         struct.pack_into("<3f", pb, off, x, gy, z)
         forced += 1
 
-# ---- v8: delete flattened donor scenery triangles over the arena ----
-# The crater-rim rocks flushed to floor level still render as dark rock-
-# textured "debris" patches (the raised-looking ring visuals, user photo).
-# Their triangles are pure scenery: degenerate (idx a=b=c) every candidate
-# whose FULL footprint is covered by surviving ground triangles; the rest ARE
-# the floor (donor modeled no ground under some rocks - removing those would
-# expose the water sheet 5.5 below). Indices are RECORD-RELATIVE: record rr's
-# dir entry at payload 20+rr*108, u32[3]=cum vert start, u32[4]=cum index
-# start; record 0 (water sheet + horizon fan) is never touched.
-ni2 = struct.unpack_from("<I", pb, b2 + 12)[0]
-ib2 = b2 + 20 + nv2 * 32
-nrec2 = struct.unpack_from("<I", pb, 4)[0]
-rb = [struct.unpack_from("<27I", pb, 20 + rr * 108) for rr in range(nrec2)]
-rbnd = [(rb[rr][3], rb[rr][4]) for rr in range(nrec2)] + [(nv2, ni2)]
-idxs = list(struct.unpack_from(f"<{ni2}I", pb, ib2))
-vbase_of = [0] * ni2
-rec_of = [0] * ni2
-for rr in range(nrec2):
-    for k in range(rbnd[rr][1], rbnd[rr + 1][1]):
-        vbase_of[k] = rbnd[rr][0]
-        rec_of[k] = rr
-VX = [0.0] * nv2; VY = [0.0] * nv2; VZ = [0.0] * nv2
-DY = [0.0] * nv2
-for i in range(nv2):
-    VX[i], VY[i], VZ[i] = struct.unpack_from("<3f", pb, b2 + 20 + 32*i)
-    DY[i] = struct.unpack_from("<f", p_orig, b_orig + 20 + 32*i + 4)[0]
-# Candidates: collapsed donor scenery ON THE FLAT ARENA only. A v9 attempt to
-# extend this map-wide opened holes at coasts (the strict-surface model cannot
-# tell who the visible surface is on cliff/slope geometry - A/B-tested);
-# coasts keep their draped-but-modest v7 look. ground_d = current y minus
-# local hfield; scenery = never tracked donor ground.
-cand_v = bytearray(nv2)
-ground_d = [0.0] * nv2
-for i in range(nv2):
-    ox2, oz2 = VX[i], VZ[i]
-    if not (0 <= ox2 < G and 0 <= oz2 < G):
-        ground_d[i] = 99.0
-        continue
-    ground_d[i] = VY[i] - sm.hf_sample(Hn, w, ox2, oz2)
-    if abs(sm.hf_sample(Hn, w, ox2, oz2) - ARENA_H) >= 0.3: continue
-    if abs(DY[i] - sm.hf_sample(H0, w, ox2, oz2)) > 2.5:
-        cand_v[i] = 1
-def tri_cells(a, b, c):
-    ax, az, bx, bz, cx2, cz2 = VX[a], VZ[a], VX[b], VZ[b], VX[c], VZ[c]
-    x0, x1 = max(0, math.floor(min(ax, bx, cx2))), min(G-1, math.ceil(max(ax, bx, cx2)))
-    z0, z1 = max(0, math.floor(min(az, bz, cz2))), min(G-1, math.ceil(max(az, bz, cz2)))
-    d = (bz - cz2)*(ax - cx2) + (cx2 - bx)*(az - cz2)
-    if abs(d) < 1e-9 or x1 - x0 > 80 or z1 - z0 > 80: return []
-    cells = []
-    for zc in range(z0, z1 + 1):
-        for xc in range(x0, x1 + 1):
-            X, Z = xc + 0.5, zc + 0.5
-            l1 = ((bz - cz2)*(X - cx2) + (cx2 - bx)*(Z - cz2)) / d
-            l2 = ((cz2 - az)*(X - cx2) + (ax - cx2)*(Z - cz2)) / d
-            if l1 >= -0.05 and l2 >= -0.05 and 1.0 - l1 - l2 >= -0.05:
-                cells.append(zc * G + xc)
-    return cells
-ntri = ni2 // 3
-cand_t = []
-surv_cells = set()
-cand_bbox = [G, -1, G, -1]   # x0,x1,z0,z1
-tri_abs = []
-for t in range(ntri):
-    a = idxs[3*t] + vbase_of[3*t]
-    b = idxs[3*t+1] + vbase_of[3*t+1]
-    c = idxs[3*t+2] + vbase_of[3*t+2]
-    tri_abs.append((a, b, c))
-    # candidate: has scenery verts, and the WHOLE tri is collapsed onto the
-    # surface (max 1.0 above local ground) - standing scenery (outer frame
-    # rocks) is excluded and stays
-    if (rec_of[3*t] != 0 and (cand_v[a] or cand_v[b] or cand_v[c])
-            and max(ground_d[a], ground_d[b], ground_d[c]) < 1.0):
-        span = max(max(VX[a],VX[b],VX[c]) - min(VX[a],VX[b],VX[c]),
-                   max(VZ[a],VZ[b],VZ[c]) - min(VZ[a],VZ[b],VZ[c]))
-        if span <= 64:
-            cand_t.append(t)
-            cand_bbox[0] = min(cand_bbox[0], math.floor(min(VX[a],VX[b],VX[c])))
-            cand_bbox[1] = max(cand_bbox[1], math.ceil(max(VX[a],VX[b],VX[c])))
-            cand_bbox[2] = min(cand_bbox[2], math.floor(min(VZ[a],VZ[b],VZ[c])))
-            cand_bbox[3] = max(cand_bbox[3], math.ceil(max(VZ[a],VZ[b],VZ[c])))
-cand_set = set(cand_t)
-for t in range(ntri):
-    if t in cand_set: continue
-    a, b, c = tri_abs[t]
-    # survivor = non-candidate near-surface arena geometry
-    if rec_of[3*t] == 0: continue
-    if min(VY[a], VY[b], VY[c]) <= ARENA_H - 2.0: continue
-    if max(abs(ground_d[a]), abs(ground_d[b]), abs(ground_d[c])) >= 3.0: continue
-    if (max(VX[a],VX[b],VX[c]) < cand_bbox[0] - 1 or min(VX[a],VX[b],VX[c]) > cand_bbox[1] + 1
-            or max(VZ[a],VZ[b],VZ[c]) < cand_bbox[2] - 1 or min(VZ[a],VZ[b],VZ[c]) > cand_bbox[3] + 1):
-        continue
-    if max(max(VX[a],VX[b],VX[c]) - min(VX[a],VX[b],VX[c]),
-           max(VZ[a],VZ[b],VZ[c]) - min(VZ[a],VZ[b],VZ[c])) > 80:
-        continue
-    surv_cells.update(tri_cells(a, b, c))
-# STRICT per-cell coverage - no dilation. The 1-cell slack let small
-# candidates that WERE the visible surface count as covered via a
-# neighbouring cell (v9 coast holes, A/B-tested).
-surv_cov = surv_cells
-# Greedy floor cover: a KEPT candidate is itself floor, so later candidates
-# covered by survivors + previously-kept ones can be removed too. Decisions
-# are one-shot and kept tris are never revisited - every degenerated tri is
-# covered by geometry that provably stays, so no holes by construction.
-# Order: most-survivor-covered first (they degenerate; the least-covered
-# become the permanent floor early).
-cand_cells = {}
-for t in cand_t:
-    a, b, c = tri_abs[t]
-    cand_cells[t] = tri_cells(a, b, c)
-def cov_frac(t):
-    cells = cand_cells[t]
-    if not cells: return -1.0
-    return sum(1 for i in cells if i in surv_cov) / len(cells)
-order = sorted(cand_t, key=cov_frac, reverse=True)
-deg_n = kept_n = 0
-for t in order:
-    cells = cand_cells[t]
-    if cells and all(i in surv_cov for i in cells):
-        v0 = idxs[3*t]
-        idxs[3*t+1] = v0; idxs[3*t+2] = v0
-        deg_n += 1
-    else:
-        kept_n += 1
-        surv_cov.update(cells)               # permanent floor: extend coverage
-struct.pack_into(f"<{ni2}I", pb, ib2, *idxs)
-print(f"scenery tris over arena: {len(cand_t)} candidates, {deg_n} degenerated, "
-      f"{kept_n} kept as floor", flush=True)
-
-# v11: repaint the KEPT debris verts with a per-record "slab" attr sampled
-# from clean arena ground of the SAME record - attrs blend that record's own
-# material pair, so cross-record copies garble (zebra; Extended v5 lesson)
-# while a single same-record source renders uniform (Extended v6 lesson).
-# Kills the baked dark-rock shading on the floor patches; the pale rim band
-# (true ground) is untouched.
-rec_of_vert = [0] * nv2
-for rr in range(nrec2):
-    for vv in range(rbnd[rr][0], rbnd[rr + 1][0]):
-        rec_of_vert[vv] = rr
-kept_scen = set()
-for t in cand_t:
-    if idxs[3*t] == idxs[3*t+1] == idxs[3*t+2]:
-        continue                                  # degenerated - never drawn
-    for vv in tri_abs[t]:
-        if cand_v[vv]:
-            kept_scen.add(vv)
-src_of_rec = {}
-for rr in range(nrec2):
-    best = None
-    for vv in range(rbnd[rr][0], rbnd[rr + 1][0]):
-        if cand_v[vv]: continue
-        ox2, oz2 = VX[vv], VZ[vv]
-        if not (0 <= ox2 < G and 0 <= oz2 < G): continue
-        if abs(sm.hf_sample(Hn, w, ox2, oz2) - ARENA_H) >= 0.3: continue
-        if abs(DY[vv] - sm.hf_sample(H0, w, ox2, oz2)) > 1.0: continue
-        d2 = (ox2 - 430)**2 + (oz2 - 500)**2      # prefer mid-arena source
-        if best is None or d2 < best[0]:
-            best = (d2, vv)
-    if best is not None:
-        src_of_rec[rr] = best[1]
-slabbed = 0
-for vv in kept_scen:
-    src = src_of_rec.get(rec_of_vert[vv])
-    if src is None: continue
-    so = b2 + 20 + 32*src + 12
-    do = b2 + 20 + 32*vv + 12
-    pb[do:do+20] = pb[so:so+20]
-    slabbed += 1
-print(f"debris verts re-attributed to slab: {slabbed} "
-      f"(source recs: {sorted(src_of_rec)})", flush=True)
-
+# v12: NO mesh cosmetics beyond the v7 pipeline. The v8-v11 attempts
+# (scenery-triangle deletion, slab attr repaints) all traded one artifact
+# for a worse one (marbling / gray slabs / coast sheets - user photos,
+# 10 Aug); the ring textures are position-baked and stay. Rolled back on
+# the user's explicit preference.
 terr_new = sm.rebuild_bdf(terr_new, bytes(pb))
 print(f"mesh: {mv} delta-tracked, {forced} forced", flush=True)
 terr_new = sm.retarget_waterdepth_path(terr_new, DONOR, ID_NEW)
@@ -1126,9 +961,6 @@ for nm_, a_, c_ in re.findall(r"\['(Mass \d+)'\].*?VECTOR3\(\s*([\d.eE+-]+)\s*,\
               f"dh={(max(cellsH)-min(cellsH))/128.0:.2f} blocked={blocked}", flush=True)
 print(f"shipped mass markers: {n_mm}, bad: {bad_mm} (want 36, 0)", flush=True)
 allok &= n_mm == 36 and bad_mm == 0
-# v8 gate: scenery degeneration happened and stayed hole-free by construction
-print(f"scenery degeneration: {deg_n} removed, {kept_n} kept (floor)", flush=True)
-allok &= 3000 <= deg_n and deg_n + kept_n == len(cand_t)
 assert allok, "verification failed"
 
 # ---- package ----
