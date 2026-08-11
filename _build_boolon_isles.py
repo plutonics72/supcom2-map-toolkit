@@ -36,7 +36,7 @@ G = 1024
 DONOR = "SC2_MP_302"
 SRC_LAYOUT = "SC2_MP_104"
 ID_NEW = "SC2_BOOLI1"
-NAME = "[6] Boolon Isles (3v3) v12"
+NAME = "[6] Boolon Isles (3v3) v13"
 OUT = os.path.join(sm.GAMEDATA, "_boolon_isles.scd")
 WL = 56.0; WR = int(WL * 128)
 ISLAND_TOP = WL + 9.0
@@ -271,6 +271,40 @@ for pid, cells in holes_by_pid.items():
 print(f"island holes filled: {hole_n} cells across {len(holes_by_pid)} islands",
       flush=True)
 
+# v13: grow_island appended to islands{} without writing owner0 - sync it
+# BEFORE smoothing, or the resync below silently drops every growth cell
+# (submerged island collars, holed bridges - caught in pre-run review)
+for pid_, cells_ in islands.items():
+    for i in cells_:
+        owner0[i] = pid_idx[pid_]
+
+# v13: majority-smooth every island silhouette (2 passes, 8-neighbourhood) -
+# the BFS growth left 90-degree stair coasts ("water edges rough", playtest
+# 12 Aug). Adds cells with >=5 island neighbours, shaves cells with <=2:
+# 45-degree chamfers. islands{}/owner0 resynced afterwards; the component /
+# growth / isolation gates downstream backstop any damage.
+for _sp in range(2):
+    add_c = []; cut_c = []
+    for z in range(1, G-1):
+        b = z*G
+        for x in range(1, G-1):
+            i = b + x
+            n8 = (isl_mask[i-1] + isl_mask[i+1] + isl_mask[i-G] + isl_mask[i+G]
+                  + isl_mask[i-G-1] + isl_mask[i-G+1] + isl_mask[i+G-1] + isl_mask[i+G+1])
+            if not isl_mask[i] and n8 >= 5:
+                add_c.append(i)
+            elif isl_mask[i] and n8 <= 2:
+                cut_c.append(i)
+    for i in add_c:
+        isl_mask[i] = 1; owner0[i] = near_id[i]
+    for i in cut_c:
+        isl_mask[i] = 0; owner0[i] = 0
+    print(f"coast smoothing pass: +{len(add_c)} -{len(cut_c)}", flush=True)
+islands = {pid: [] for pid in islands}
+for i in range(G*G):
+    if owner0[i] and isl_mask[i]:
+        islands[pid_order[owner0[i] - 1]].append(i)
+
 # ---- blueprint: bridges from original necks ----
 def boundary(cells):
     bs = []
@@ -402,19 +436,39 @@ for pid, cells in islands.items():
         else:
             yv = relief
         setH(x, z, yv)
-# taper ring: blend island edge down to the sea floor
+# taper ring: blend island edge down to the sea floor.
+# v13: the EAST peninsula gets a CLIFF coast instead (full drop within ~3
+# cells) - playtest: "lots of beach, no limit to ingress, no death alley
+# like Boolon's right side". Its only entries become the three bridges.
+east_pid_i = pid_idx[east_id]
+# v13: piecewise beach profile (was a linear 10-cell shelf to the sea floor).
+# The old ring held depth 1-7 for ~7 cells - naval yards sat half-sunk and
+# ships beached on it (playtest 12 Aug). New: 3 cells of real beach down to
+# ~54.5 (hover landing unchanged), then a fast drop to naval depth 10 by d=6.
 for i in range(G*G):
     d = dist_out[i]
     if 1 <= d <= TAPER and not isl_mask[i]:
         x, z = i % G, i // G
-        t_ = d / (TAPER + 1)
         edge_h = ISLAND_MIN
-        target = edge_h + (SEA_MAX - edge_h) * t_
+        if near_id[i] == east_pid_i:
+            t_ = min(1.0, d / 2.5)
+            target = edge_h + (SEA_MAX - edge_h) * t_
+        elif d <= 3:
+            target = edge_h + (54.5 - edge_h) * (d / 3.0)
+        elif d <= 6:
+            target = 54.5 + (46.0 - 54.5) * ((d - 3) / 3.0)
+        else:
+            target = SEA_MAX
         if Hn[z*w + x] / 128.0 < target:
             setH(x, z, target)
 print("islands raised + tapered", flush=True)
-# 3) bridges: flat deck along each neck line + aprons onto the islands
+# 3) bridges: flat deck along each neck line + aprons onto the islands.
+# v13: approach_mask marks the on-island junction plateaus + apron lanes -
+# walk-UNCONDITIONAL like the decks. Relying on apron slopes to pass gentle()
+# proved fragile (slope quantisation + island relief severed junctions; the
+# fragmented components then got cost-blocked by _recompute_islands).
 bridge_mask = bytearray(G*G)
+approach_mask = bytearray(G*G)
 for (pa, pb, ax, az, bx, bz) in bridges:
     steps = max(abs(ax-bx), abs(az-bz), 1)
     dx_, dz_ = (bx-ax)/steps, (bz-az)/steps
@@ -434,17 +488,25 @@ for (pa, pb, ax, az, bx, bz) in bridges:
                 if not isl_mask[i]:
                     setH(x, z, BRIDGE_Y)
                     bridge_mask[i] = 1
-                elif s <= 5 or s >= steps - 5:
-                    # junction plateau: flatten the island landing to deck height
-                    # so the r=3 corridor never pinches at the bridge mouth
+                else:
+                    # island cells ON the deck line: junction plateaus at the
+                    # ends AND any coastal finger crossed mid-span - flatten
+                    # to deck height and mark as corridor. v13 lesson: a thin
+                    # diagonal island finger on the P18-P24 line produced a
+                    # blocked seam that severed the deck lengthwise once
+                    # island walk became slope-gated.
                     if Hn[z*w + x] / 128.0 < BRIDGE_Y:
                         setH(x, z, BRIDGE_Y)
+                    approach_mask[i] = 1
             else:                              # apron: only raise low ground on islands
                 dd = (-s) if s < 0 else (s - steps)
                 tgt = BRIDGE_Y - APRON_SLOPE * dd
-                if tgt > WL + 1 and Hn[z*w + x] / 128.0 < tgt and isl_mask[i]:
-                    setH(x, z, tgt)
+                if tgt > WL + 1 and isl_mask[i]:
+                    if Hn[z*w + x] / 128.0 < tgt:
+                        setH(x, z, tgt)
+                    approach_mask[i] = 1
 print("bridges built", flush=True)
+PLAY_LO, PLAY_HI = 170, 854      # gates sample naval depth inside this box
 
 # ---- mass pads: relocate old-neck masses onto land NOW and level 11x11 pads
 # (BEFORE the hfield freeze so mesh/collision/waterDepth all see the pads;
@@ -488,6 +550,14 @@ for nm_, a_, b_, c_ in re.findall(r"\['(Mass \d+)'\].*?VECTOR3\(\s*([\d.eE+-]+)\
     xi, zi = level_pad(xi, zi)
     mass_pads.append((nm_, xi, zi))
 print(f"mass pads: {len(mass_pads)} levelled", flush=True)
+# v13: pad 11x11s are walk-exempt from the slope gate (their EDGE cells run
+# gentle() against unleveled relief outside the pad and could fail the
+# 121-walkable marker gate on relief islands)
+pad_mask = bytearray(G*G)
+for _nm, px_, pz_ in mass_pads:
+    for z in range(pz_-5, pz_+6):
+        for x in range(px_-5, px_+6):
+            pad_mask[z*G + x] = 1
 
 hf_new = sm.rebuild_bdf(hf_raw, bytes(hp))
 
@@ -514,7 +584,11 @@ for i in range(nv2):
     # sea-stack spires (never hfield-tracking, so the resample skips them) and
     # delta-lifted shore verts both land here. Tests CURRENT y (post-resample);
     # the |y-WL|<1 guard protects the water sheet.
-    if nh < WL + 3.5 or bridge_mask[ii]:
+    if (nh < WL + 3.5 or bridge_mask[ii]
+            or (dist_out[ii] <= TAPER and not isl_mask[ii])):
+        # v13: the whole beach/taper ring included - spire remnants on the
+        # inner band (59.5-61.4) draped over coasts and could hide units
+        # behind above-ground mesh at shallow camera angles (playtest)
         x, y, z = struct.unpack_from("<3f", pb, off)
         if y > max(nh, WL) + 1.0 and abs(y - WL) >= 1.0:
             gy = nh - 0.15
@@ -589,7 +663,10 @@ for z in range(0, G, 11):
 assert wet_ref is not None
 land_L = [li for li in range(5) if td.costs_payload[layers[li][2] + wet_ref] == 255]
 amph_L = [li for li in range(5) if li not in land_L]
-SLOPE_MAX = int(1.2 * 128)
+SLOPE_MAX = int(1.2 * 128) + 1   # v13: the 1.2/cell bridge aprons quantise to
+                                 # EXACTLY 154 raw - int truncation to 153 made
+                                 # every apron ramp fail its own slope limit
+                                 # once island walk became slope-gated
 def gentle(x, z):
     h0 = Hn[z*w + x]
     for dx, dz in ((1, 0), (-1, 0), (0, 1), (0, -1)):
@@ -601,7 +678,14 @@ for z in range(G):
     for x in range(G):
         i = z*G + x
         dry = Hn[z*w + x] > WR
-        walk = dry and (isl_mask[i] or bridge_mask[i] or (dist_out[i] <= TAPER and gentle(x, z)))
+        # v13: island cells are slope-gated too (was unconditional) - the
+        # commander jammed for minutes in steep satellite relief the nav map
+        # claimed was walkable (playtest 12 Aug); bridges stay unconditional.
+        # East-peninsula beach ring is NOT walkable (death alley).
+        walk = dry and (bridge_mask[i] or pad_mask[i] or approach_mask[i]
+                        or (isl_mask[i] and gentle(x, z))
+                        or (dist_out[i] <= TAPER and gentle(x, z)
+                            and near_id[i] != east_pid_i))
         for li in land_L:
             pay[layers[li][2] + i] = 1 if walk else 255
         for li in amph_L:
@@ -624,6 +708,30 @@ for i in range(G*G):
                 pay[layers[li][2] + i] = 255
             walled += 1
 print(f"nav set; bridge anti-boarding {walled} cells", flush=True)
+# v13: east peninsula "death alley" - amphib/hover walls on its coastal strip
+# (outer 5 cells) and its beach ring; the three bridge mouths stay open so
+# hover can arrive OVER the bridges (deck-edge walls already stop any
+# water->deck boarding, so the mouths are unreachable from the sea).
+emask13 = bytearray(G*G)
+for i in islands[east_id]:
+    emask13[i] = 1
+ecore5 = erode_m(bytearray(emask13), 5)
+mouths = []
+for (pa, pb, ax, az, bx, bz) in bridges:
+    if pa == east_id: mouths.append((ax, az))
+    if pb == east_id: mouths.append((bx, bz))
+def near_mouth(x, z):
+    return any(max(abs(x - mx), abs(z - mz)) <= 12 for mx, mz in mouths)
+ewalls = 0
+for i in range(G*G):
+    x, z = i % G, i // G
+    on_strip = emask13[i] and not ecore5[i]
+    on_ring = (not isl_mask[i]) and dist_out[i] <= TAPER and near_id[i] == east_pid_i
+    if (on_strip or on_ring) and not bridge_mask[i] and not near_mouth(x, z):
+        for li in amph_L:
+            pay[layers[li][2] + i] = 255
+        ewalls += 1
+print(f"east death-alley walls: {ewalls} cells, {len(mouths)} bridge mouths open", flush=True)
 sm._recompute_islands(pay, layers)
 costs_new = sm.rebuild_bdf(donor[DONOR + ".costs.win.bdf"], pay)
 walk_mask = bytearray(1 if pay[layers[land_L[0]][2] + i] != 255 else 0 for i in range(G*G))
@@ -800,8 +908,15 @@ for a in range(2, 7):
     allok &= ok
 for (pa2, pb2, ax2, az2, bx2, bz2) in bridges:
     mx_, mz_ = (ax2+bx2)//2, (az2+bz2)//2
+    im_ = mz_*G + mx_
     print(f"  dbg bridge P{pa2}-P{pb2}: ({ax2},{az2})->({bx2},{bz2}) "
-          f"er@mid={er[mz_*G+mx_]} walk@mid={m0[mz_*G+mx_]}", flush=True)
+          f"er@mid={er[im_]} walk@mid={m0[im_]}", flush=True)
+    if not m0[im_]:
+        print(f"    mid cell: h={Hn[mz_*w+mx_]/128.0:.2f} isl={isl_mask[im_]} "
+              f"bridge={bridge_mask[im_]} dist_out={dist_out[im_]} "
+              f"near_e={near_id[im_] == east_pid_i} gentle={gentle(mx_, mz_)} "
+              f"pad={pad_mask[im_]} layers={[pay[layers[li][2] + im_] for li in range(5)]} "
+              f"land_L={land_L} amph_L={amph_L}", flush=True)
 # bridges are the only land links: cutting ALL bridge cells must fragment the land
 m_cut = bytearray(m0)
 for i in range(G*G):
@@ -961,6 +1076,39 @@ for nm_, a_, c_ in re.findall(r"\['(Mass \d+)'\].*?VECTOR3\(\s*([\d.eE+-]+)\s*,\
               f"dh={(max(cellsH)-min(cellsH))/128.0:.2f} blocked={blocked}", flush=True)
 print(f"shipped mass markers: {n_mm}, bad: {bad_mm} (want 36, 0)", flush=True)
 allok &= n_mm == 36 and bad_mm == 0
+# v13 gate: sea inside the play box is naval-deep beyond the 6-cell shore band
+min_depth = 99.0
+for z in range(PLAY_LO, PLAY_HI + 1, 3):
+    for x in range(PLAY_LO, PLAY_HI + 1, 3):
+        i = z*G + x
+        if (not isl_mask[i] and not bridge_mask[i] and dist_out[i] >= 7
+                and Hn[z*w + x] <= WR):
+            min_depth = min(min_depth, WL - Hn[z*w + x] / 128.0)
+print(f"open-sea min depth in play box: {min_depth:.1f} (want >= 9.5)", flush=True)
+allok &= min_depth >= 9.5
+# v13 gate: east core is amph-unreachable from open water without a bridge
+amph_nb = bytearray(1 if (pay[layers[amph_L[0]][2] + i] != 255 and not bridge_mask[i])
+                    else 0 for i in range(G*G))
+seas = snapc(amph_nb, 100, 512)
+seen_a = flood(amph_nb, seas)
+ecore6 = erode_m(bytearray(emask13), 6)
+leak = sum(1 for i in range(G*G) if ecore6[i] and seen_a[i])
+print(f"east core amph-reachable from sea (no bridges): {leak} cells (want 0)", flush=True)
+allok &= leak == 0
+# v13 gate: every spawn cell and its 3x3 is walkable
+bad_sp = 0
+for a_, (sx_, sz_) in SPAWNS.items():
+    if not all(m0[(sz_+dz_)*G + sx_+dx_] for dz_ in (-1, 0, 1) for dx_ in (-1, 0, 1)):
+        bad_sp += 1
+        print(f"  spawn {a_} at ({sx_},{sz_}) not fully walkable", flush=True)
+print(f"spawns non-walkable: {bad_sp} (want 0)", flush=True)
+allok &= bad_sp == 0
+# v13 gate: every mass pad is walk-REACHABLE from spawn 1 (the slope gate
+# could ring a flat pad with blocked cells and no other gate would notice)
+seen_w = flood(m0, snapc(m0, *SPAWNS[1]))
+unreach = [nm_ for nm_, px_, pz_ in mass_pads if not seen_w[pz_*G + px_]]
+print(f"pads unreachable from spawn1: {len(unreach)} {unreach} (want 0)", flush=True)
+allok &= not unreach
 assert allok, "verification failed"
 
 # ---- package ----
