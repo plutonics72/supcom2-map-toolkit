@@ -47,8 +47,8 @@ differ from the user-facing versions in `READ ME - Install.txt` (that file wins)
 | [6] Boolon Isles (3v3) v13 | `_boolon_isles.scd` | `SC2_BOOLI1` | v13 INSTALLED on laptop 12 Aug (playtest fixes: piecewise beach->naval depth 10, east-peninsula death alley with cliff coast + amph walls + bridge-only ingress, slope-gated island pathing + approach corridors, coast smoothing, taper-ring mesh flush; all gates green + in-game VERIFIED 12 Aug (sea factory + ship float correctly, commander cross-island march clean, east cliffs sealed, no unit vanishing at any zoom, AI invaded over bridges); v13 RELEASED to Drive 12 Aug on user's word, SHA verified, README updated). v12 was released 10 Aug (SHA verified, README updated), in-game verified BY CLAUDE. Boolon's TRUE topology as real terrain islands; v2-v3 layout spec, v4-v7 render-mesh war (crater rims, sea-stack spires, sunken shoreline rings/ponds — see git log). v8: MASS POINTS root cause = pad pass and lua pass used different relocation rules — 15/36 markers shipped stranded at the shoreline off their leveled pads while the gate validated the pad list; markers snapped to pads + gate validates the SHIPPED save.lua (extractors built in-game, 2500/2500; user confirmed "mass points are now good"). v8: minimap/lobby previews per-pixel rendered from final heights (solid-block DXT1). v8-v11 ring-cosmetics attempts (index-buffer tri deletion, per-record slab attr repaints) ALL REVERTED in v12 — they read as gray marble slabs/zebra at play zoom (user photos); the crater-ring ground art is position-baked, "normal grass" there is NOT achievable — do not attempt again, user explicitly chose the natural v7 render. User-approved and released |
 | Frost Crater / Ashen Basin (3v3) | `_frost_crater_3v3.scd` / `_ashen_basin_3v3.scd` | — | good (re-skins) |
 | Crucible / Crossfire Atoll / The Maw | `_*_by_chris.scd` | — | user-made, untouched |
-| [6] Boolon Complex Extended (3v3) v6 | `_boolon_ext.scd` | `SC2_BOOLX1` | RETIRED on the user's word 10 Aug (superseded by Boolon Isles): moved out of gamedata to gamedata_backups\_boolon_ext.scd.retired-10aug (recoverable; never was on Drive). Keep the born-dry lessons: attr position-dependence proven 3 ways, uniform slab = the ceiling |
-| [6] Boolon Harbor (3v3) v6 | `_boolon_harbor.scd` | `SC2_BOOLW1` | rebuilt+installed on the LAPTOP (10 Aug) — NOT on Drive. v5 refinements: hover landing ramps W(213,403)/E(783,420), density-gated anti-boarding walls, marker/mesh/route/island gates green. v6: block-accurate waterDepth dry-marking replaced the dilate-8 halo (the halo clipped the water render into white rectangles around the deck complex — user photos 10 Aug). Superseded in spirit by Boolon Isles (user: Harbor "looks like a different map"); keep/drop is the user's call |
+| [6] Boolon Complex Extended (3v3) v7 | `_boolon_ext.scd` | `SC2_BOOLX1` | v1–v6 (void plates, `_build_boolon_ext.py`) RETIRED on the user's word 10 Aug — laptop copy moved to gamedata_backups\_boolon_ext.scd.retired-10aug; never on Drive. **REVIVED 7 Sep as v7 = EAST STRETCH** (`_build_boolon_east.py`) on the user's new brief: "just the land areas for the 2 most right players extended to the right and the bridge that connects them doubled in width" — a monotonic x-warp of every spatial file, no plates. Installed on the old DESKTOP only, all build gates green, **NOT yet verified in-game** (the desktop session was disconnected; SC2 refused to start with "Inadequate monitor resolution"). NOT on Drive. The born-dry lessons stand (attr position-dependence proven 3 ways, uniform slab = the ceiling); the stretch sidesteps them by moving real geometry instead of inventing ground |
+| [6] Boolon Harbor (3v3) v6 | `_boolon_harbor.scd` | `SC2_BOOLW1` | rebuilt+installed on the LAPTOP (10 Aug) — NOT on Drive. v5 refinements: hover landing ramps W(213,403)/E(783,420), density-gated anti-boarding walls, marker/mesh/route/island gates green. v6: block-accurate waterDepth dry-marking replaced the dilate-8 halo (the halo clipped the water render into white rectangles around the deck complex — user photos 10 Aug). Superseded in spirit by Boolon Isles (user: Harbor "looks like a different map"); keep/drop is the user's call. (The old desktop still has the 9 Aug v4 build installed.) |
 
 Latest-generation build scripts (each is self-contained, reads the game files +
 prior installed maps, verifies, installs):
@@ -78,23 +78,35 @@ prior installed maps, verifies, installs):
   guards, stock-style layer treatment, waterDepth regen (decode-verified dry
   block; asserts water blocks stay byte-identical to stock), mass pads + inland
   placement, minimap island painting.
-- `_build_boolon_ext.py` — Boolon Complex Extended (`SC2_BOOLX1` on stock
-  `SC2_MP_104`, a born-dry deck-over-void map). East zone (690,200,832,830)
-  unified into one platform + 10-cell dilation + 4 interior void fills
-  (138k new cells), Laplacian relaxation, 6 new masses, minimap/preview
-  regeneration. v4 mesh = RIGID-STACK translation (translate every in-zone
-  vert by the local hfield delta, preserving inter-layer offsets — v2/v3
-  collapsed the void's stacked layers to one plane and caused map-wide
-  z-fighting moiré). Script currently at **v5, prepared but NOT RUN**: adds
-  the appearance-attr transplant (copy 20B packed vertex attrs, bytes 12..32
-  of the 32B stride, from nearest original deck-surface donor verts onto
-  translated verts in the walking-surface band of new cells). Rationale: new
-  ground inherits the void's baked attrs and renders as pale abyss-mist —
-  functionally walkable but INVISIBLE as land; the user's "no change from
-  standard" cursor probe mapped to game (689,662), ONE CELL west of the fill
-  edge. The transplant was tried once as v3 but never visually isolated
-  (v3 also carried the moiré bug); v5 = v4's verified geometry + transplant
-  only, positions untouched.
+- `_build_boolon_east.py` — Boolon Complex Extended **v7, current** (v6 was
+  the laptop's retired uniform-slab plate build — hence the bump). A monotonic
+  1-D warp of world x applied identically to EVERY spatial file: f(x)=x for
+  x≤740; 740+2(x−740) on [740,832] (the two east players' decks + their N-S
+  bridge, 2× wider); 924+(x−832)·100/192 on [832,1024] (abyss wall compressed);
+  identity beyond 1024. Consistency by construction — no plates, no void
+  fills. Warped: hfield heights (bilinear) + the per-cell type grid that follows
+  them (u16 header + 1024² bytes, 2=deck/3=void), costs (3 layers, islands
+  recomputed), terrain mesh (vertex x, all 20,650 in-range BVH AABB x-bounds —
+  exact under a monotone map — record bbox centres), collision2 (vertex x +
+  its own 108-B record header + 56-B BVH nodes at xoff+108, then y snap),
+  mapobjs (44-B prop records, pos at +16; PLUS the 169-entry binary marker
+  table after the props — patched by exact float-triple search of every
+  save.lua VECTOR3 with x>740), save/scenario lua markers + spawns, minimap
+  (DXT1 decoded → columns resampled through the inverse warp → re-encoded
+  with a simple luminance-endpoint DXT1 encoder; block-column duplication
+  streaked), lobby previews from the warped minimap. NOT warped:
+  lighting/mask*.dds (UV-atlas lightmaps, follow the per-vertex attrs),
+  pcloud, decals (empty), info (AREA 912 > new east edge 899). Gates:
+  ground-height-under-every-vertex preserved on walkable ground (0.00;
+  compressed cliff faces in the void differ up to ~11 — expected, no
+  gameplay), bridge 30→60 cells at z=500, walkable east edge 819→899, r=3
+  routes required, r=5 no-regression vs stock (stock already fails r=5 on
+  most pairs), masses on walkable ground. Result: ~8.07 MB, 27 entries.
+- `_build_boolon_ext.py` — RETIRED (v1–v6 void-plate builds of the same map;
+  the laptop's git history has the v5 nearest-donor attr transplant and v6
+  uniform-slab variants, both visually failed: the 20B vertex attrs are
+  position-baked). Kept for its rigid-stack mesh translation (v4) and the
+  minimap/preview/erosion-gate patterns, which `_build_boolon_east.py` reuses.
 - `_build_boolon_mirror.py` — Boolon Harbor (`SC2_BOOLW1`): Boolon's deck
   layout as flat platforms (y=66) on the Treallach (`SC2_MP_302`, WL=56)
   watered donor; full five-file pipeline incl. `write_waterdepth_dds_mips`;
@@ -136,25 +148,35 @@ prior installed maps, verifies, installs):
 
 ## Open next steps
 
-- **Boolon Extended v5 — BUILT + INSTALLED on the laptop (9 Aug), awaiting
-  the user's visual check**. Pre-run adversarial review caught a BLOCKER:
-  the east-unification loop plated 8,186 cells INSIDE the forbidden chasm
-  vertex desert (x≤741, z 480–650 overlap of EAST_ZONE) — a guard now skips
-  it, and the transplant gained gates (positions byte-asserted untouched;
-  recolored>1000; attrs actually changed). Run results: 131,931 new cells,
-  9,392 verts re-attributed (9,186 changed, 0 no-donor skips), all r=3/r=5
-  routes + east platform OK. In-game self-verification IS possible now:
-  screen access to `supremecommander2.exe` was granted 10 Aug (full tier) —
-  launch via Steam CLI, drive the lobby, verify visually. Check: east
-  platform x 690–832 should render as deck ground, not pale mist, at both
-  zooms. Fallback if patchwork-noisy: single fixed
-  donor attr (see nearest_attr note). On approval: release BOTH Boolon maps
-  per the release loop. NOTE: on this machine the game may never have had
-  the map before — fresh lobby entry "[6] Boolon Complex Extended (3v3) v5".
-- **Boolon Isles v7 — awaiting user playtest, then Drive release on their
-  word**. In-game verified 10 Aug (Claude-driven): arena flat, no spires/
-  rings/ponds, pads buildable. If approved, decide Harbor keep/drop and
-  Extended retire at the same time.
+- **Boolon Extended v7 (east stretch) — TOP PRIORITY: verify IN-GAME**. The
+  user's 7 Sep brief (after Isles shipped): "just the land areas for the 2
+  most right players extended to the right and the bridge that connects them
+  doubled in width. I am sure this can be done". `_build_boolon_east.py` does
+  exactly that (see the script list) and is installed on the old DESKTOP, but
+  could NOT be driven in-game there (desktop session disconnected; SC2 fails
+  with "Inadequate monitor resolution" without a live display). On whichever
+  machine has a live display: `git pull`, run the script (game closed),
+  restart SC2, then per the user's standing instruction drive it yourself
+  before reporting. Diagnostic checks: (1) lobby preview shows the fat east
+  side; (2) at strategic zoom the east decks are ~2× wider and the N-S bridge
+  between ARMY_3/4 is ~60 cells wide (was 30); (3) march a unit from ARMY_4
+  (now 769,282) across the bridge to ARMY_3 (761,732) in formation — no
+  stalls at the bridge mouths; (4) send a unit to the new far-east ground
+  around (880,380) and (880,700) — it must arrive and stand ON the deck (not
+  float/sink); (5) up close, the stretched deck texture/props/railings look
+  2× elongated E-W but coherent — no moiré, no holes, no invisible walls at
+  the old x=819 edge (turret fire test if in doubt); (6) the compressed
+  abyss wall east of the decks looks steeper but drawn. If anything is off,
+  the symptom names the file (README caveats). On success: Telegram
+  screenshots, then on user approval release Extended v7 to the Drive folder
+  + `READ ME - Install.txt` (size + SHA-256). Cosmetic caveat to watch:
+  if the deck diffuse is vertex-UV mapped, its texels stretch 2× in the
+  band. Why not plates: v1–v6 filled void with plates and the user saw NO
+  change — plates over the abyss render like the abyss (attrs are
+  position-baked, see Cosmetics below) and east of x≈832 nothing walkable
+  is drawn at all (abyss wall to y −2300) — never plate there.
+- **Boolon Isles v13 — released 12 Aug, user-approved.** No open work unless
+  the user reports something.
 - **Boolon Harbor v6 — installed on the laptop, awaiting user verdict**
   (they called it "a different map"; Isles is the direct answer to that).
 - **Port the full v12 nav stack to the 3v3 and 2v2**: nav noise repair,
